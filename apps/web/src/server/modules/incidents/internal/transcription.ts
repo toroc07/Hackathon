@@ -6,7 +6,8 @@
  * con el audio guardado. Un ciudadano que reporta una emergencia no puede
  * perder su aviso porque un servicio externo tuvo un mal minuto.
  *
- * Orden: ElevenLabs Scribe -> OpenAI Whisper -> null.
+ * Orden: Groq Whisper (whisper-large-v3-turbo) -> ElevenLabs Scribe ->
+ * OpenAI Whisper -> null.
  */
 
 import { LOW_CONFIDENCE_THRESHOLD, type TranscriptionResult } from '@dispatch/contracts';
@@ -22,6 +23,31 @@ interface Engine {
   isConfigured(): boolean;
   transcribe(audio: Buffer, mimeType: string): Promise<{ text: string; language: string | null }>;
 }
+
+const groq: Engine = {
+  name: 'groq-whisper-large-v3-turbo',
+  isConfigured: () => Boolean(process.env.GROQ_API_KEY),
+  async transcribe(audio, mimeType) {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(audio)], { type: mimeType }), 'report.webm');
+    form.append('model', 'whisper-large-v3-turbo');
+    // Sesgar al español acelera y mejora bastante el reconocimiento en Cartagena.
+    form.append('language', 'es');
+    form.append('response_format', 'json');
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY!}` },
+      body: form,
+      signal: AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Groq ${response.status}: ${await response.text()}`);
+    }
+    const data = (await response.json()) as { text?: string; language?: string };
+    return { text: data.text ?? '', language: data.language ?? 'es' };
+  },
+};
 
 const elevenLabs: Engine = {
   name: 'elevenlabs-scribe',
@@ -69,7 +95,7 @@ const openAi: Engine = {
   },
 };
 
-const ENGINES: readonly Engine[] = [elevenLabs, openAi];
+const ENGINES: readonly Engine[] = [groq, elevenLabs, openAi];
 
 export function transcriptionAvailable(): boolean {
   return ENGINES.some((e) => e.isConfigured());

@@ -1,6 +1,6 @@
 import { MAX_AUDIO_BYTES, zAudioReportRequest } from '@dispatch/contracts';
 import { apiErrorResponse, HttpError } from '@/src/server/infra/errors';
-import { createIncidentFromAudio } from '@/src/server/modules/incidents/internal/audio-intake';
+import { createIncidentFromAudio } from '@/src/server/modules/incidents';
 import { readIdempotencyKey, readJson } from '../_shared';
 
 export const dynamic = 'force-dynamic';
