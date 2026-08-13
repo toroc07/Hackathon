@@ -25,6 +25,7 @@ import {
 import { db, closePool } from './infra/db';
 import { runMigrations } from '@dispatch/db/migrations';
 import { seedDatabase } from '@dispatch/db/seed';
+import { isLocalPostgres } from './test-helpers';
 
 const BOCAGRANDE = { lat: 10.4006, lng: -75.5560 };
 const CRESPO = { lat: 10.4450, lng: -75.5130 };
@@ -51,7 +52,7 @@ function reportar(
   });
 }
 
-describe('E2E — flujo completo de emergencia', () => {
+describe.skipIf(!isLocalPostgres())('E2E — flujo completo de emergencia', () => {
   beforeAll(async () => {
     await runMigrations();
   });
