@@ -13,7 +13,23 @@
  * Ambos ya estaban; aqui pasan de red de seguridad a mecanismo principal.
  */
 
-import { Pool, type PoolClient, type QueryResultRow } from 'pg';
+import pg, { Pool, type PoolClient, type QueryResultRow } from 'pg';
+
+// ─── Parsers de tipos ───────────────────────────────────────────────────────
+// `pg` devuelve BIGINT (oid 20) como STRING por defecto, para no perder
+// precision en valores mayores que Number.MAX_SAFE_INTEGER.
+//
+// Todos nuestros BIGINT son timestamps epoch en milisegundos (~1.8e12), muy por
+// debajo de ese limite (9e15). Sin este parser, cada `created_at` y `expires_at`
+// llegaria como "1786635390187" y la aritmetica se romperia en silencio:
+// `expires_at < now` compararia string con numero, los ETA saldrian NaN y las
+// ofertas nunca expirarian. Lo convertimos una vez, aqui.
+pg.types.setTypeParser(20, (value: string) => Number.parseInt(value, 10));
+
+// NUMERIC (oid 1700) tambien llega como string. No lo usamos hoy (los scores
+// son DOUBLE PRECISION), pero si alguien añade una columna NUMERIC lo notara
+// aqui en vez de en produccion.
+pg.types.setTypeParser(1700, (value: string) => Number.parseFloat(value));
 
 declare global {
   // eslint-disable-next-line no-var
