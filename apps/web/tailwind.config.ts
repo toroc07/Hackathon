@@ -29,6 +29,7 @@ const config: Config = {
           pressed: 'var(--emergency-pressed)',
           soft:    'var(--emergency-soft)',
           ring:    'var(--emergency-ring)',
+          ink:     'var(--emergency-ink)',
         },
         ok:   { DEFAULT: 'var(--ok)',   soft: 'var(--ok-soft)' },
         warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },

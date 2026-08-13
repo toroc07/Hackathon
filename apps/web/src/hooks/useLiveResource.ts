@@ -27,8 +27,10 @@ export function useLiveResource<T>({ initialData, endpoint, topics, select }: Op
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
     try {
-      const response = await fetch(endpoint, { cache: 'no-store' });
+      const response = await fetch(endpoint, { cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error(`Polling ${endpoint}: HTTP ${response.status}`);
       const next = select(await response.json());
       if (mountedRef.current) {
@@ -36,7 +38,14 @@ export function useLiveResource<T>({ initialData, endpoint, topics, select }: Op
         setError(null);
       }
     } catch (caught) {
-      if (mountedRef.current) setError(caught instanceof Error ? caught : new Error('Error de actualización'));
+      if (mountedRef.current) {
+        const message = caught instanceof DOMException && caught.name === 'AbortError'
+          ? 'El centro de despacho tardó demasiado en responder'
+          : caught instanceof Error ? caught.message : 'Error de actualización';
+        setError(new Error(message));
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   }, [endpoint, select]);
 
@@ -44,6 +53,11 @@ export function useLiveResource<T>({ initialData, endpoint, topics, select }: Op
     mountedRef.current = true;
     let connected = false;
     let source: EventSource | null = null;
+
+    // SSE notifica cambios futuros, pero no hidrata el estado inicial. Hacer
+    // una lectura inmediata evita que la UI quede cargando indefinidamente
+    // cuando el stream abre correctamente antes del primer evento.
+    void refresh();
 
     const stopPolling = () => {
       if (pollingRef.current) clearInterval(pollingRef.current);

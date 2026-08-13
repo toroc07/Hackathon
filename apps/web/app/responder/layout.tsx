@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 
 export const metadata: Metadata = {
   title: 'Responder · Despacho Cartagena',
-  manifest: '/responder/manifest.webmanifest',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Responder' },
+  manifest: '/responder-manifest.webmanifest',
+  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'Responder' },
 };
 
 export default function ResponderLayout({ children }: Readonly<{ children: ReactNode }>) {

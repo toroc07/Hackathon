@@ -48,17 +48,44 @@ interface PositionState {
   vehicle: VehicleWithLocation;
 }
 
-const statusColor: Record<VehicleStatus, string> = {
-  AVAILABLE: '#2dd4bf',
-  RESERVED: '#fbbf24',
-  ASSIGNED: '#fb923c',
-  EN_ROUTE: '#60a5fa',
-  ON_SCENE: '#c084fc',
-  TRANSPORTING: '#f472b6',
-  UNAVAILABLE: '#94a3b8',
-  OUT_OF_SERVICE: '#ef4444',
-  OFFLINE: '#475569',
-};
+interface MapPalette {
+  bg: string; grid: string; ok: string; warn: string; info: string;
+  emergency: string; muted: string; overlay: string; textStrong: string;
+}
+
+/** Lee la paleta activa desde las variables CSS del sistema de diseño (mismo
+ *  patron que TrackingMap.tsx). Se lee una vez al montar: no hay selector de
+ *  tema en vivo, asi que no necesita ser reactiva. */
+function readPalette(el: Element | null): MapPalette {
+  const styles = getComputedStyle(el ?? document.documentElement);
+  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    bg: token('--surface-base', '#ffffff'),
+    grid: token('--border-subtle', 'rgba(11,21,38,.11)'),
+    ok: token('--ok', '#087f5b'),
+    warn: token('--warn', '#a65300'),
+    info: token('--info', '#0969a2'),
+    emergency: token('--emergency', '#d90429'),
+    muted: token('--text-muted', '#68758a'),
+    overlay: token('--surface-overlay', '#e9eef6'),
+    textStrong: token('--text-primary', '#0b1526'),
+  };
+}
+
+function statusColorOf(status: VehicleStatus, palette: MapPalette): string {
+  switch (status) {
+    case 'AVAILABLE': return palette.ok;
+    case 'RESERVED':
+    case 'ASSIGNED': return palette.warn;
+    case 'EN_ROUTE': return palette.info;
+    case 'ON_SCENE': return '#8b5cf6';       // violeta: en escena, distinto de en-ruta
+    case 'TRANSPORTING': return '#db2777';   // magenta: trasladando
+    case 'UNAVAILABLE': return palette.muted;
+    case 'OUT_OF_SERVICE': return palette.emergency;
+    case 'OFFLINE': return palette.overlay;
+    default: return palette.muted;
+  }
+}
 
 function emptyCollection(): FeatureCollection {
   return { type: 'FeatureCollection', features: [] };
@@ -161,6 +188,7 @@ function drawFallback(
   coverage: ZoneCoverage[],
   selectedIncidentId: string | null,
   assignedVehicleId: string | null,
+  palette: MapPalette,
 ) {
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -178,9 +206,9 @@ function drawFallback(
     height - ((lat - CARTAGENA_BOUNDS.minLat) / (CARTAGENA_BOUNDS.maxLat - CARTAGENA_BOUNDS.minLat)) * height,
   ];
 
-  ctx.fillStyle = '#071019';
+  ctx.fillStyle = palette.bg;
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#132837';
+  ctx.strokeStyle = palette.grid;
   ctx.lineWidth = 1;
   for (let x = 0; x < width; x += 52) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
   for (let y = 0; y < height; y += 52) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
@@ -194,8 +222,8 @@ function drawFallback(
       if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.closePath();
-    ctx.fillStyle = health === 'CRITICAL' ? '#ef44442e' : health === 'DEGRADED' ? '#f59e0b22' : '#14b8a612';
-    ctx.strokeStyle = health === 'CRITICAL' ? '#ef4444' : health === 'DEGRADED' ? '#f59e0b' : '#14b8a6';
+    ctx.fillStyle = health === 'CRITICAL' ? `${palette.emergency}2e` : health === 'DEGRADED' ? `${palette.warn}22` : `${palette.ok}12`;
+    ctx.strokeStyle = health === 'CRITICAL' ? palette.emergency : health === 'DEGRADED' ? palette.warn : palette.ok;
     ctx.fill();
     ctx.stroke();
   });
@@ -206,7 +234,7 @@ function drawFallback(
     const geometry = assigned.geometry as { coordinates: Coordinate };
     const [fromX, fromY] = point(geometry.coordinates);
     const [toX, toY] = point([selected.lng, selected.lat]);
-    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = palette.info; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
     ctx.beginPath(); ctx.moveTo(fromX, fromY); ctx.lineTo(toX, toY); ctx.stroke(); ctx.setLineDash([]);
   }
 
@@ -214,15 +242,15 @@ function drawFallback(
     const geometry = feature.geometry as { coordinates: Coordinate };
     const properties = feature.properties as { callsign: string; status: VehicleStatus };
     const [x, y] = point(geometry.coordinates);
-    ctx.fillStyle = statusColor[properties.status];
+    ctx.fillStyle = statusColorOf(properties.status, palette);
     ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
-    ctx.font = '600 10px ui-monospace'; ctx.fillStyle = '#dbeafe'; ctx.fillText(properties.callsign, x + 9, y + 3);
+    ctx.font = '600 10px ui-monospace'; ctx.fillStyle = palette.textStrong; ctx.fillText(properties.callsign, x + 9, y + 3);
   });
   incidents.forEach((incident) => {
     const [x, y] = point([incident.lng, incident.lat]);
     const radius = incident.priority === 'P1' ? 12 : incident.priority === 'P2' ? 10 : 8;
-    ctx.fillStyle = incident.id === selectedIncidentId ? '#ffffff' : '#fb7185';
-    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3;
+    ctx.fillStyle = incident.id === selectedIncidentId ? palette.bg : palette.emergency;
+    ctx.strokeStyle = palette.emergency; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   });
 }
@@ -245,6 +273,7 @@ export function MapCanvas(props: MapCanvasProps) {
   const markerRef = useRef<MarkerInstance | null>(null);
   const positionsRef = useRef(new Map<string, PositionState>());
   const latestRef = useRef(props);
+  const paletteRef = useRef<MapPalette | null>(null);
   const [mode, setMode] = useState<'loading' | 'maplibre' | 'fallback'>('loading');
 
   useEffect(() => { latestRef.current = props; }, [props]);
@@ -262,6 +291,8 @@ export function MapCanvas(props: MapCanvasProps) {
   }, [vehicles]);
 
   useEffect(() => {
+    // Se lee una vez: no hay selector de tema en vivo en esta app.
+    paletteRef.current = readPalette(containerRef.current);
     let disposed = false;
     async function initialize() {
       try {
@@ -281,24 +312,25 @@ export function MapCanvas(props: MapCanvasProps) {
           style: {
             version: 8,
             sources: { cartagena: { type: 'vector', url: `pmtiles://${location.origin}/maps/cartagena.pmtiles` } },
-            layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#071019' } }],
+            layers: [{ id: 'background', type: 'background', paint: { 'background-color': paletteRef.current!.bg } }],
           },
         });
         mapRef.current = map;
         map.on('load', () => {
           const current = latestRef.current;
+          const palette = paletteRef.current!;
           map.addSource('coverage', { type: 'geojson', data: coverageGeoJson(current.zones, current.coverage) });
           map.addLayer({ id: 'coverage-fill', type: 'fill', source: 'coverage', paint: {
-            'fill-color': ['match', ['get', 'health'], 'CRITICAL', '#ef4444', 'DEGRADED', '#f59e0b', '#14b8a6'],
-            'fill-opacity': ['match', ['get', 'health'], 'CRITICAL', 0.25, 'DEGRADED', 0.16, 0.08],
+            'fill-color': ['match', ['get', 'health'], 'CRITICAL', palette.emergency, 'DEGRADED', palette.warn, palette.ok],
+            'fill-opacity': ['match', ['get', 'health'], 'CRITICAL', 0.2, 'DEGRADED', 0.14, 0.08],
           } });
           map.addSource('assignment', { type: 'geojson', data: emptyCollection() });
-          map.addLayer({ id: 'assignment-line', type: 'line', source: 'assignment', paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-dasharray': [2, 2] } });
+          map.addLayer({ id: 'assignment-line', type: 'line', source: 'assignment', paint: { 'line-color': palette.info, 'line-width': 3, 'line-dasharray': [2, 2] } });
           map.addSource('incidents', { type: 'geojson', data: incidentGeoJson(current.incidents) });
           map.addLayer({ id: 'incident-points', type: 'circle', source: 'incidents', paint: {
-            'circle-color': '#fb7185',
+            'circle-color': palette.emergency,
             'circle-radius': ['match', ['get', 'priority'], 'P1', 12, 'P2', 10, 'P3', 8, 6],
-            'circle-stroke-color': '#7f1d1d', 'circle-stroke-width': 2,
+            'circle-stroke-color': palette.bg, 'circle-stroke-width': 2,
           } });
           map.on('click', 'incident-points', (event) => {
             const incidentId = event.features?.[0]?.properties?.id;
@@ -309,8 +341,8 @@ export function MapCanvas(props: MapCanvasProps) {
             'text-field': ['concat', '●  ', ['get', 'callsign']], 'text-size': 12, 'text-font': ['Open Sans Bold'],
             'text-allow-overlap': true, 'text-anchor': 'left', 'text-offset': [0.3, 0],
           }, paint: {
-            'text-color': ['match', ['get', 'status'], 'AVAILABLE', '#2dd4bf', 'EN_ROUTE', '#60a5fa', 'OUT_OF_SERVICE', '#ef4444', '#94a3b8'],
-            'text-halo-color': '#071019', 'text-halo-width': 2,
+            'text-color': ['match', ['get', 'status'], 'AVAILABLE', palette.ok, 'EN_ROUTE', palette.info, 'OUT_OF_SERVICE', palette.emergency, palette.muted],
+            'text-halo-color': palette.bg, 'text-halo-width': 2,
           } });
           setMode('maplibre');
         });
@@ -336,7 +368,7 @@ export function MapCanvas(props: MapCanvasProps) {
     const selected = incidents.find((incident) => incident.id === selectedIncidentId);
     if (!selected) return;
     const element = document.createElement('button');
-    element.className = 'h-6 w-6 rounded-full border-4 border-white bg-red-500 shadow-[0_0_0_7px_rgba(239,68,68,.25)]';
+    element.className = 'h-6 w-6 rounded-full border-4 border-white bg-emergency shadow-[0_0_0_7px_var(--emergency-ring)] animate-pulse-ring';
     element.setAttribute('aria-label', `Incidente seleccionado ${selected.code}`);
     markerRef.current = new window.maplibregl.Marker({ element })
       .setLngLat([selected.lng, selected.lat])
@@ -372,6 +404,7 @@ export function MapCanvas(props: MapCanvasProps) {
         current.coverage,
         current.selectedIncidentId,
         current.assignedVehicleId,
+        paletteRef.current ?? readPalette(canvasRef.current),
       );
       frame = requestAnimationFrame(tick);
     };
@@ -395,21 +428,23 @@ export function MapCanvas(props: MapCanvasProps) {
   };
 
   return (
-    <div className="relative h-full min-h-[520px] overflow-hidden bg-[#071019]" aria-label="Mapa operativo de Cartagena">
+    <div className="relative h-full min-h-[520px] overflow-hidden bg-surface" aria-label="Mapa operativo de Cartagena">
       <div ref={containerRef} className="absolute inset-0" />
       {mode !== 'maplibre' && <canvas ref={canvasRef} onClick={selectFallbackIncident} className="absolute inset-0 h-full w-full cursor-crosshair" />}
-      <div className="pointer-events-none absolute left-4 top-4 rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 backdrop-blur">
-        <p className="text-[10px] font-bold uppercase tracking-[.2em] text-cyan-300">Cartagena · malla operativa</p>
-        <p className="mt-1 text-xs text-slate-300">{vehicles.length} unidades · {incidents.length} incidente(s)</p>
+      <div className="pointer-events-none absolute left-4 top-4 rounded-md border border-edge-subtle bg-surface/85 px-3 py-2 shadow-lg backdrop-blur-md">
+        <p className="text-[10px] font-bold uppercase tracking-[.2em] text-info">Cartagena · malla operativa</p>
+        <p className="mt-1 text-xs text-content-secondary">
+          <span className="tnum">{vehicles.length}</span> unidades · <span className="tnum">{incidents.length}</span> incidente(s)
+        </p>
       </div>
-      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-3 rounded-lg border border-white/10 bg-slate-950/80 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-300 backdrop-blur">
-        <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-teal-400" /> Disponible</span>
-        <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-400" /> En ruta</span>
-        <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-rose-400" /> Incidente</span>
-        <span><i className="mr-1 inline-block h-2 w-2 rounded-sm border border-amber-400 bg-amber-500/20" /> Déficit</span>
+      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-wrap gap-3 rounded-md border border-edge-subtle bg-surface/85 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-content-secondary shadow-lg backdrop-blur-md">
+        <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-2 rounded-full bg-ok shadow-[0_0_6px_var(--ok)]" /> Disponible</span>
+        <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-2 rounded-full bg-info shadow-[0_0_6px_var(--info)]" /> En ruta</span>
+        <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-2 rounded-full bg-emergency shadow-[0_0_6px_var(--emergency)]" /> Incidente</span>
+        <span className="flex items-center gap-1.5"><i className="inline-block h-2 w-2 rounded-sm border border-warn bg-warn/20" /> Déficit</span>
       </div>
       {mode === 'fallback' && (
-        <div className="absolute right-4 top-4 rounded-md border border-amber-400/30 bg-amber-950/80 px-2 py-1 text-[10px] font-semibold text-amber-200">
+        <div className="absolute right-4 top-4 rounded-sm border border-warn/30 bg-warn-soft px-2.5 py-1.5 text-[10px] font-semibold text-warn shadow-lg">
           Vista local de contingencia
         </div>
       )}

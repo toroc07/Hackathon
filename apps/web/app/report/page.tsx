@@ -1,11 +1,6 @@
-import type { Metadata } from 'next';
-import { ReportClient } from './ReportClient';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Reportar emergencia',
-  description: 'Describe la emergencia con tu voz. Sin registro.',
-};
-
-export default function ReportPage() {
-  return <ReportClient />;
+/** Compatibilidad con enlaces antiguos: el reporte ahora vive en la raiz. */
+export default function LegacyReportPage() {
+  redirect('/');
 }

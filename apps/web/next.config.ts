@@ -1,6 +1,9 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  // Permite que CI valide en un directorio aislado mientras un servidor de
+  // demostracion mantiene `.next` abierto en el mismo workspace compartido.
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
   // 'standalone' sigue sirviendo para Docker/Railway; Vercel lo ignora.
   output: 'standalone',
   // `pg` es un paquete de Node (usa net/tls): no debe pasar por el bundler.

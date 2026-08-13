@@ -1,0 +1,11 @@
+{
+  "name": "Responder · Despacho Cartagena",
+  "short_name": "Responder",
+  "description": "Operación móvil de unidades prehospitalarias",
+  "start_url": "/responder",
+  "scope": "/responder",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#087f5b",
+  "orientation": "portrait"
+}

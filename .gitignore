@@ -28,3 +28,23 @@ packages/db/data/
 
 # Entorno del asistente — no versionar skills de Claude
 .claude/
+
+# Python (backend/routing, carpeta pg_api)
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+
+# Artefactos de datos generados — se reconstruyen desde los .geojson fuente,
+# no se versionan binarios pesados (este pesa 13 MB).
+*.pkl
+
+# Build aislado para auditoria visual (NEXT_DIST_DIR) y capturas de pantalla
+# de QA ad-hoc — nunca se versionan (el build pesa decenas de MB).
+apps/web/.next-ui-audit/
+.chrome-ui-audit/
+.ui-audit-*.png
+.ui-audit-cdp.mjs
+.tmp-*.png
+.chrome-ui-audit-*/
