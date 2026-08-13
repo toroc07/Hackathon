@@ -121,9 +121,9 @@ export function TrackingMap({ tracking }: Props) {
 
       // Fondo con retícula: da sensación de mapa y de movimiento cuando el
       // encuadre se ajusta, sin necesitar tiles.
-      ctx.fillStyle = '#0b1220';
+      ctx.fillStyle = COLOR.bg;
       ctx.fillRect(0, 0, size.w, size.h);
-      ctx.strokeStyle = 'rgba(148,163,184,0.08)';
+      ctx.strokeStyle = COLOR.grid;
       ctx.lineWidth = 1;
       for (let i = 0; i < size.w; i += 44) {
         ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size.h); ctx.stroke();
@@ -138,7 +138,8 @@ export function TrackingMap({ tracking }: Props) {
         const veh = project(vehicle, center, scale, size);
 
         // Trayecto: discontinuo para leerse como "estimado", no como ruta real.
-        ctx.strokeStyle = 'rgba(244,63,94,0.55)';
+        ctx.strokeStyle = COLOR.vehicle;
+        ctx.globalAlpha = 0.55;
         ctx.lineWidth = 3;
         ctx.setLineDash([8, 8]);
         ctx.beginPath();
@@ -146,30 +147,37 @@ export function TrackingMap({ tracking }: Props) {
         ctx.lineTo(inc.x, inc.y);
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
 
         // Ambulancia
-        ctx.fillStyle = '#f43f5e';
+        ctx.fillStyle = COLOR.vehicle;
         ctx.beginPath();
         ctx.arc(veh.x, veh.y, 13, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = '600 14px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🚑', veh.x, veh.y + 1);
+        // Cruz medica dibujada, no emoji: el emoji depende de la fuente del
+        // sistema y se ve distinto (o no se ve) segun el telefono.
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(veh.x - 5, veh.y); ctx.lineTo(veh.x + 5, veh.y);
+        ctx.moveTo(veh.x, veh.y - 5); ctx.lineTo(veh.x, veh.y + 5);
+        ctx.stroke();
       }
 
       // Destino: pulso para que se distinga del vehiculo de un vistazo.
-      const pulse = 1 + Math.sin(Date.now() / 420) * 0.18;
-      ctx.fillStyle = 'rgba(56,189,248,0.18)';
+      const pulse = reduceMotion ? 1 : 1 + Math.sin(Date.now() / 420) * 0.18;
+      ctx.fillStyle = COLOR.target;
+      ctx.globalAlpha = 0.2;
       ctx.beginPath();
       ctx.arc(inc.x, inc.y, 22 * pulse, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#38bdf8';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = COLOR.target;
       ctx.beginPath();
       ctx.arc(inc.x, inc.y, 9, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#0b1220';
+      ctx.strokeStyle = COLOR.bg;
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
@@ -181,12 +189,16 @@ export function TrackingMap({ tracking }: Props) {
   }, [tracking.incidentLat, tracking.incidentLng]);
 
   return (
-    <div className="relative w-full overflow-hidden rounded-2xl ring-1 ring-slate-800"
+    <div className="relative w-full overflow-hidden rounded-md ring-1 ring-edge-subtle"
          style={{ height: 280 }}>
-      <canvas ref={canvasRef} className="block h-full w-full" />
-      <div className="pointer-events-none absolute bottom-3 left-3 flex gap-3 text-[11px]">
-        <Legend color="#38bdf8" label="Tu ubicación" />
-        {tracking.vehicle && <Legend color="#f43f5e" label={tracking.vehicle.callsign} />}
+      {/* El canvas es decorativo; el estado real lo dan el titular, el ETA y la
+          línea de tiempo, que sí son texto accesible. */}
+      <canvas ref={canvasRef} className="block h-full w-full" role="presentation" />
+      <div className="pointer-events-none absolute bottom-3 left-3 flex gap-2 text-[11px]">
+        <Legend token="var(--info)" label="Tu ubicación" />
+        {tracking.vehicle && (
+          <Legend token="var(--emergency)" label={tracking.vehicle.callsign} />
+        )}
       </div>
     </div>
   );
