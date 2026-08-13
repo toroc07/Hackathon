@@ -1,12 +1,14 @@
 import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { zTranscribeAudioResponse } from '@dispatch/contracts';
+import { zConversationTurn, zConverseResponse } from '@dispatch/contracts';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import multer, { MulterError } from 'multer';
+import { z } from 'zod';
+import { converseTurn, synthesizeSpeech } from './modules/incidents/conversation.js';
+import { transcribeAudio } from './modules/incidents/voice.js';
 import { HttpError, toApiError } from './errors.js';
-import { transcribeVoiceReport } from './modules/incidents/voice.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +21,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX
 
 const app = express();
 app.use(cors());
-// public/test.html — página manual para grabar y probar la transcripción sin curl/Postman.
+// public/test.html — página manual para grabar y probar la llamada sin curl/Postman.
 app.use(express.static(path.join(__dirname, '../public')));
 
 app.get('/health', (_req: Request, res: Response) => {
@@ -27,24 +29,46 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // Raíz informativa: no hay UI, así que un GET / a mano no debe verse "roto".
+// El reporte de voz que CREA el incidente vive en apps/web (POST
+// /api/incidents/audio) — ahí está el motor de deduplicación real. Este
+// servicio es solo la "llamada" con IA: orientación en vivo mientras espera
+// la ambulancia, no reemplaza ni duplica ese reporte.
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     service: 'audio-service',
     endpoints: {
       'GET /health': 'estado del servicio',
-      'GET /test.html': 'página manual para grabar y probar la transcripción',
-      'POST /api/incidents/transcribe': 'multipart/form-data con campo `audio` → { description, suggestedType }',
+      'GET /test.html': 'página manual para probar la llamada con la IA',
+      'POST /api/incidents/converse': 'multipart: campos `audio` + `history` (JSON) → { transcript, reply, replyAudioBase64, history }',
     },
   });
 });
 
-app.post('/api/incidents/transcribe', upload.single('audio'), async (req: Request, res: Response) => {
+app.post('/api/incidents/converse', upload.single('audio'), async (req: Request, res: Response) => {
   try {
     if (!req.file || req.file.size === 0) {
       throw new HttpError(400, 'VALIDATION_FAILED', 'Falta el archivo de audio (`audio`)');
     }
-    const result = await transcribeVoiceReport(req.file.buffer, req.file.mimetype, req.file.originalname || 'nota-de-voz.webm');
-    res.json(zTranscribeAudioResponse.parse(result));
+    const historyRaw = typeof req.body?.history === 'string' ? req.body.history : '[]';
+    let history: z.infer<typeof zConversationTurn>[];
+    try {
+      history = z.array(zConversationTurn).parse(JSON.parse(historyRaw));
+    } catch {
+      throw new HttpError(400, 'VALIDATION_FAILED', '`history` debe ser JSON válido: [{role, content}]');
+    }
+
+    const transcript = await transcribeAudio(req.file.buffer, req.file.mimetype, req.file.originalname || 'turno.webm');
+    const { reply, detectedTypes } = await converseTurn(transcript, history);
+    const replyAudio = await synthesizeSpeech(reply);
+
+    res.json(zConverseResponse.parse({
+      transcript,
+      reply,
+      detectedTypes,
+      replyAudioBase64: replyAudio ? replyAudio.buffer.toString('base64') : null,
+      replyAudioMimeType: replyAudio ? replyAudio.mimeType : null,
+      history: [...history, { role: 'user', content: transcript }, { role: 'assistant', content: reply }],
+    }));
   } catch (error) {
     const mapped = toApiError(error);
     res.status(mapped.status).json(mapped.body);

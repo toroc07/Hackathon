@@ -18,6 +18,7 @@
     "start": "npm run start --workspace=@dispatch/web",
     "typecheck": "tsc -b packages/contracts && npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "db:migrate": "npm run db:migrate --workspace=@dispatch/db",
     "db:reset": "npm run db:reset --workspace=@dispatch/db",
     "db:seed": "npm run db:seed --workspace=@dispatch/db",
     "check:layers": "node scripts/check-layers.mjs",

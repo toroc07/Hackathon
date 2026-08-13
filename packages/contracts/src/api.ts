@@ -8,8 +8,9 @@
  *  3. GET /incidents/:id/candidates devuelve el desglose completo persistido.
  *  4. Todo POST mutador acepta header `Idempotency-Key`.
  *  5. Los clientes envían ACCIONES, nunca `status`.
- *  6. POST /incidents/transcribe (§31, aditivo): transcribe una nota de voz
- *     del reporter y la estructura en un reporte sugerido. No persiste nada.
+ *  6. POST /incidents/converse (§32, aditivo): "llamada" con IA — un turno de
+ *     voz por request, historial en el cliente. Servicio aparte (backend/),
+ *     no crea incidentes: eso lo sigue haciendo POST /incidents/audio.
  */
 
 import { z } from 'zod';
@@ -50,25 +51,33 @@ export const zCreateIncidentResponse = z.object({
 export type CreateIncidentResponse = z.infer<typeof zCreateIncidentResponse>;
 
 /**
- * POST /incidents/transcribe — audio → transcripción + reporte (§31).
- * Multipart, no JSON: el body es un campo `audio` (blob). No crea nada por sí
- * solo; el cliente sigue confirmando cada campo antes de POST /incidents.
- * La IA solo captura y estructura (README "La capa de IA y su límite"): todo
- * en `report` es una SUGERENCIA editable. Nunca decide prioridad médica (§24)
- * ni marca las señales críticas (unconscious/notBreathing/severeBleeding/
- * trapped) — esas siempre son botones explícitos del humano.
+ * POST /incidents/converse — "llamada" con la IA (§32, aditivo).
+ * Un turno de voz por request: el cliente manda `audio` + `history` (JSON de
+ * turnos previos) y recibe la transcripción, la respuesta hablada del
+ * asistente y el historial actualizado para el siguiente turno. Sin sesión
+ * en el servidor — el cliente es dueño del historial. Orienta al reportero
+ * mientras espera la ambulancia; NUNCA da diagnóstico, prioridad ni tiempos
+ * de llegada (§24). No crea ni modifica incidentes — eso es POST
+ * /incidents/audio, servido por apps/web, no por este servicio.
  */
-export const zTranscribeAudioResponse = z.object({
-  /** Salida literal del speech-to-text, sin tocar. */
-  transcript: z.string().max(1000),
-  report: z.object({
-    /** 1-2 frases en español que resumen qué está pasando, para prellenar `description`. */
-    summary: z.string().max(1000),
-    suggestedType: zIncidentType.nullable(),
-    suggestedPatientCount: z.number().int().min(0).max(50).nullable(),
-  }),
+export const zConversationTurn = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().max(2000),
 });
-export type TranscribeAudioResponse = z.infer<typeof zTranscribeAudioResponse>;
+export type ConversationTurn = z.infer<typeof zConversationTurn>;
+
+export const zConverseResponse = z.object({
+  transcript: z.string().max(1000),
+  reply: z.string().max(2000),
+  /** Todos los tipos detectados por palabras clave en lo dicho hasta ahora — determinan qué protocolo(s) de primeros auxilios guiaron esta respuesta. Puede haber más de uno (p. ej. inconsciente + trauma). Transparencia, no un campo que el cliente deba usar para nada operativo (eso sigue siendo POST /incidents). */
+  detectedTypes: z.array(zIncidentType),
+  /** Audio en base64 de la respuesta hablada. null si ningún proveedor de TTS está disponible — el cliente cae a la voz nativa del navegador. */
+  replyAudioBase64: z.string().nullable(),
+  /** audio/mpeg (ElevenLabs) o audio/wav (Groq). null junto con replyAudioBase64. */
+  replyAudioMimeType: z.string().nullable(),
+  history: z.array(zConversationTurn),
+});
+export type ConverseResponse = z.infer<typeof zConverseResponse>;
 
 /** GET /incidents/:id */
 export const zIncidentDetailResponse = z.object({

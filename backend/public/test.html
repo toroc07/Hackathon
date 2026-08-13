@@ -2,64 +2,205 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Probar transcripción de audio</title>
+<title>Probar la llamada con IA</title>
 </head>
 <body style="font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px;">
-  <h1>🎙️ Probar audio → transcripción</h1>
-  <p>Graba una nota de voz, se envía sola a <code>/api/incidents/transcribe</code> al detener.</p>
+  <h1>📞 Probar la llamada con IA</h1>
+  <p style="color:#555; font-size:.9rem;">
+    El reporte de voz que crea el incidente vive en la app principal
+    (<code>POST /api/incidents/audio</code>, con el motor de deduplicación real).
+    Este servicio es solo la conversación en vivo mientras espera la ambulancia.
+  </p>
 
-  <button id="rec">Grabar</button>
-  <button id="stop" disabled>Detener y enviar</button>
-  <p id="status"></p>
+  <section>
+    <h2>Llamada con la IA</h2>
+    <p>Como una llamada real: habla y suelta — la IA nota sola cuándo empezaste y cuándo terminaste, y responde en voz. Nada de botones de grabar/detener por turno.</p>
 
-  <audio id="playback" controls style="display:block; margin-top:1rem; width:100%;"></audio>
-  <pre id="result" style="background:#f4f4f4; padding:1rem; white-space:pre-wrap; word-break:break-word;"></pre>
+    <button id="call-btn">📞 Llamar</button>
+    <button id="call-hangup" disabled>Colgar</button>
+    <label style="display:block; margin-top:.75rem; font-size:.85rem; color:#555;">
+      Sensibilidad del micrófono
+      <input id="call-sensitivity" type="range" min="0.005" max="0.08" step="0.005" value="0.02" style="vertical-align:middle;">
+    </label>
+    <div style="background:#eee; border-radius:4px; height:8px; margin-top:.5rem; overflow:hidden;">
+      <div id="call-meter" style="background:#22c55e; height:100%; width:0%;"></div>
+    </div>
+    <p id="call-status" style="font-weight:bold;">Colgado.</p>
+
+    <div id="call-log" style="display:flex; flex-direction:column; gap:.5rem; margin-top:1rem; max-height:50vh; overflow-y:auto;"></div>
+    <audio id="call-audio" style="display:none;"></audio>
+  </section>
 
   <script>
-    let mediaRecorder;
-    let chunks = [];
+    // ── Llamada con la IA — detección de voz automática (VAD) ───────────────
+    // Nada de "grabar/detener" a mano: mientras la llamada está activa, el
+    // micrófono se escucha todo el tiempo; un volumen por encima del umbral
+    // abre un turno de grabación y `SILENCE_MS` de silencio lo cierra y lo
+    // manda solo. Así se siente como hablar con alguien, no como usar un
+    // dictáfono.
+    (() => {
+      const SILENCE_MS = 900;    // silencio para dar el turno por terminado
+      const MIN_SPEECH_MS = 300; // ignora ruidos/carraspeos muy cortos
+      const MAX_TURN_MS = 20000; // corte de seguridad si el VAD no detecta silencio
 
-    const recBtn = document.getElementById('rec');
-    const stopBtn = document.getElementById('stop');
-    const statusEl = document.getElementById('status');
-    const playback = document.getElementById('playback');
-    const resultEl = document.getElementById('result');
+      const callBtn = document.getElementById('call-btn');
+      const hangupBtn = document.getElementById('call-hangup');
+      const sensitivityEl = document.getElementById('call-sensitivity');
+      const meterEl = document.getElementById('call-meter');
+      const statusEl = document.getElementById('call-status');
+      const logEl = document.getElementById('call-log');
+      const audioEl = document.getElementById('call-audio');
 
-    recBtn.onclick = async () => {
-      resultEl.textContent = '';
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream);
-      chunks = [];
-      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
-        playback.src = URL.createObjectURL(blob);
-        stream.getTracks().forEach((t) => t.stop());
-        statusEl.textContent = 'Transcribiendo…';
+      let history = [];
+      let stream, audioCtx, analyser, dataArray, pollTimer;
+      let mediaRecorder, chunks;
+      /** idle | listening | recording | processing | speaking */
+      let state = 'idle';
+      let speechStartedAt = 0;
+      let lastLoudAt = 0;
+
+      function addBubble(who, text) {
+        const bubble = document.createElement('div');
+        bubble.style.cssText = who === 'user'
+          ? 'align-self:flex-end; background:#dbeafe; padding:.5rem .75rem; border-radius:.75rem; max-width:85%;'
+          : 'align-self:flex-start; background:#f4f4f4; padding:.5rem .75rem; border-radius:.75rem; max-width:85%;';
+        bubble.textContent = (who === 'user' ? '🎙️ ' : '🤖 ') + text;
+        logEl.appendChild(bubble);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      const STATUS_LABEL = {
+        listening: '🟢 En llamada — escuchando…',
+        recording: '🎙️ Escuchándote…',
+        processing: '🤔 La IA está pensando…',
+        speaking: '🔊 La IA está hablando…',
+      };
+      function setState(next) {
+        state = next;
+        if (STATUS_LABEL[next]) statusEl.textContent = STATUS_LABEL[next];
+      }
+
+      function currentVolume() {
+        analyser.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (const v of dataArray) { const norm = (v - 128) / 128; sum += norm * norm; }
+        return Math.sqrt(sum / dataArray.length);
+      }
+
+      function startRecorder() {
+        chunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+        mediaRecorder.start();
+      }
+
+      async function stopRecorderAndSend() {
+        const blob = await new Promise((resolve) => {
+          mediaRecorder.onstop = () => resolve(new Blob(chunks, { type: mediaRecorder.mimeType }));
+          mediaRecorder.stop();
+        });
+        setState('processing');
 
         const form = new FormData();
-        form.append('audio', blob, 'nota.webm');
+        form.append('audio', blob, 'turno.webm');
+        form.append('history', JSON.stringify(history));
         try {
-          const res = await fetch('/api/incidents/transcribe', { method: 'POST', body: form });
+          const res = await fetch('/api/incidents/converse', { method: 'POST', body: form });
           const json = await res.json();
-          resultEl.textContent = JSON.stringify(json, null, 2);
-          statusEl.textContent = res.ok ? 'Listo ✅' : 'Error ❌ (status ' + res.status + ')';
-        } catch (err) {
-          statusEl.textContent = 'Error de red';
-          resultEl.textContent = String(err);
-        }
-      };
-      mediaRecorder.start();
-      statusEl.textContent = 'Grabando…';
-      recBtn.disabled = true;
-      stopBtn.disabled = false;
-    };
+          if (state === 'idle') return; // colgaron mientras esperábamos la respuesta
+          if (!res.ok) {
+            statusEl.textContent = 'Error ❌ (status ' + res.status + '): ' + (json.error?.message ?? '');
+            setState('listening');
+            return;
+          }
+          history = json.history;
+          addBubble('user', json.transcript);
+          addBubble('assistant', json.reply + (json.detectedTypes?.length ? '  [protocolo: ' + json.detectedTypes.join(' + ') + ']' : ''));
 
-    stopBtn.onclick = () => {
-      mediaRecorder.stop();
-      recBtn.disabled = false;
-      stopBtn.disabled = true;
-    };
+          if (json.replyAudioBase64) {
+            // TTS del backend (ElevenLabs o Groq) — mejor calidad.
+            setState('speaking');
+            audioEl.src = 'data:' + (json.replyAudioMimeType || 'audio/wav') + ';base64,' + json.replyAudioBase64;
+            audioEl.onended = () => { if (state !== 'idle') setState('listening'); };
+            audioEl.play().catch(() => { if (state !== 'idle') setState('listening'); });
+          } else if ('speechSynthesis' in window) {
+            // Sin TTS configurado en el backend: la voz nativa del navegador
+            // igual hace que la IA "hable" — sin key, sin setup.
+            setState('speaking');
+            const utterance = new SpeechSynthesisUtterance(json.reply);
+            utterance.lang = 'es-ES';
+            utterance.onend = () => { if (state !== 'idle') setState('listening'); };
+            utterance.onerror = () => { if (state !== 'idle') setState('listening'); };
+            speechSynthesis.speak(utterance);
+          } else {
+            setState('listening');
+          }
+        } catch (err) {
+          if (state !== 'idle') {
+            statusEl.textContent = 'Error de red: ' + err;
+            setState('listening');
+          }
+        }
+      }
+
+      function pollVolume() {
+        pollTimer = setInterval(() => {
+          const level = currentVolume();
+          meterEl.style.width = Math.min(100, Math.round(level / 0.15 * 100)) + '%';
+          const threshold = Number(sensitivityEl.value);
+          const now = Date.now();
+
+          if (state !== 'listening' && state !== 'recording') return;
+
+          if (level > threshold) {
+            lastLoudAt = now;
+            if (state === 'listening') {
+              speechStartedAt = now;
+              startRecorder();
+              setState('recording');
+            }
+          }
+          if (state === 'recording') {
+            const silentFor = now - lastLoudAt;
+            const spokeFor = now - speechStartedAt;
+            if ((silentFor > SILENCE_MS && spokeFor > MIN_SPEECH_MS) || spokeFor > MAX_TURN_MS) {
+              stopRecorderAndSend();
+            }
+          }
+        }, 100);
+      }
+
+      callBtn.onclick = async () => {
+        history = [];
+        logEl.innerHTML = '';
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        dataArray = new Uint8Array(analyser.fftSize); // getByteTimeDomainData quiere fftSize, no frequencyBinCount
+
+        callBtn.disabled = true;
+        hangupBtn.disabled = false;
+        setState('listening');
+        pollVolume();
+      };
+
+      hangupBtn.onclick = () => {
+        state = 'idle';
+        clearInterval(pollTimer);
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        stream?.getTracks().forEach((t) => t.stop());
+        audioCtx?.close();
+        audioEl.pause();
+        if ('speechSynthesis' in window) speechSynthesis.cancel();
+        meterEl.style.width = '0%';
+        callBtn.disabled = false;
+        hangupBtn.disabled = true;
+        statusEl.textContent = 'Colgado.';
+      };
+    })();
   </script>
 </body>
 </html>

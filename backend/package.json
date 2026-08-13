@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Servicio backend independiente: procesa notas de voz del reporter (transcripción + clasificación de tipo). Separado del monolito Next.js a propósito.",
+  "description": "Servicio independiente de \"llamada\" con IA: orienta por voz al reportero mientras espera la ambulancia. El reporte que crea el incidente (transcripción + dedup real) vive en apps/web, POST /api/incidents/audio.",
   "main": "./src/server.ts",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -16,7 +16,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "multer": "^2.0.0"
+    "multer": "^2.0.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
