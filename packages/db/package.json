@@ -15,13 +15,12 @@
   },
   "dependencies": {
     "@dispatch/contracts": "*",
-    "better-sqlite3": "^11.7.0",
-    "drizzle-orm": "^0.38.0"
+    "pg": "^8.13.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "@types/pg": "^8.11.10"
   }
 }
