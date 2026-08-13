@@ -7,6 +7,7 @@ import {
   type TrackingStep,
 } from '@dispatch/contracts';
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
+import { AiCallWidget } from '@/src/components/call/AiCallWidget';
 import {
   AlertIcon, AmbulanceIcon, CarCrashIcon, FallIcon, HeartIcon,
   LungsIcon, TraumaIcon, UnconsciousIcon,
@@ -106,6 +107,10 @@ export function TrackingClient({ token }: { token: string }) {
 
       <section className="mt-5">
         <TrackingMap tracking={tracking} />
+      </section>
+
+      <section className="mt-4">
+        <AiCallWidget />
       </section>
 
       {tracking.vehicle && (

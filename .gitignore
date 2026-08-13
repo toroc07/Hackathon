@@ -26,5 +26,8 @@ packages/db/data/
 *.log
 .DS_Store
 
+# Vercel CLI — config local del link al proyecto
+.vercel/
+
 # Entorno del asistente — no versionar skills de Claude
 .claude/

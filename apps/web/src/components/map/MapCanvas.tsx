@@ -7,39 +7,24 @@ import type {
   Zone,
   ZoneCoverage,
 } from '@dispatch/contracts';
+import * as maplibregl from 'maplibre-gl';
+import type { GeoJSONSource, MapGeoJSONFeature, MapLayerMouseEvent, Map as MapInstance, Marker as MarkerInstance } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 
 const CARTAGENA_BOUNDS = { minLng: -75.59, maxLng: -75.46, minLat: 10.38, maxLat: 10.51 };
 const INTERPOLATION_MS = 3_000;
 
-type Coordinate = [number, number];
-type FeatureCollection = { type: 'FeatureCollection'; features: Array<Record<string, unknown>> };
-type GeoJsonSource = { setData(data: FeatureCollection): void };
-type MapInstance = {
-  on(event: string, callback: () => void): void;
-  on(event: string, layerId: string, callback: (event: { features?: Array<{ properties?: Record<string, unknown> }> }) => void): void;
-  addSource(id: string, source: Record<string, unknown>): void;
-  addLayer(layer: Record<string, unknown>): void;
-  getSource(id: string): GeoJsonSource | undefined;
-  remove(): void;
-};
-type MarkerInstance = { setLngLat(point: Coordinate): MarkerInstance; addTo(map: MapInstance): MarkerInstance; remove(): void };
-type MapLibreRuntime = {
-  Map: new (options: Record<string, unknown>) => MapInstance;
-  Marker: new (options: Record<string, unknown>) => MarkerInstance;
-  addProtocol(name: string, handler: unknown): void;
-};
-type PmtilesRuntime = {
-  Protocol: new () => { tile: unknown; add(archive: unknown): void };
-  PMTiles: new (url: string) => unknown;
-};
+// Tiles en vivo de OpenStreetMap: raster, sin nada que descargar ni empaquetar.
+// Cambio deliberado respecto al plan original (vectorial offline vía PMTiles):
+// esos archivos nunca llegaron al repo, así que el mapa caía siempre al modo
+// de contingencia. Esto exige internet en el dispositivo — ya no es
+// offline-first — pero es un mapa real hoy. Atribución obligatoria por la
+// política de uso de tiles de OSM (ver attributionControl más abajo).
+const OSM_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
-declare global {
-  interface Window {
-    maplibregl?: MapLibreRuntime;
-    pmtiles?: PmtilesRuntime;
-  }
-}
+type Coordinate = [number, number];
+type FeatureCollection = GeoJSON.FeatureCollection;
 
 interface PositionState {
   from: Coordinate;
@@ -62,6 +47,13 @@ const statusColor: Record<VehicleStatus, string> = {
 
 function emptyCollection(): FeatureCollection {
   return { type: 'FeatureCollection', features: [] };
+}
+
+/** `map.getSource` devuelve el tipo unión `Source`; nuestras fuentes son
+ *  siempre GeoJSON, así que este cast centralizado evita repetirlo en cada
+ *  call site. */
+function geoSource(map: MapInstance, id: string): GeoJSONSource | undefined {
+  return map.getSource(id) as GeoJSONSource | undefined;
 }
 
 function fleetGeoJson(positions: Map<string, PositionState>, now: number): FeatureCollection {
@@ -137,22 +129,6 @@ function assignmentGeoJson(
   };
 }
 
-function loadLocalScript(src: string, globalReady: () => boolean): Promise<void> {
-  if (globalReady()) return Promise.resolve();
-  const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
-  if (existing) return new Promise((resolve, reject) => {
-    existing.addEventListener('load', () => resolve(), { once: true });
-    existing.addEventListener('error', () => reject(new Error(src)), { once: true });
-  });
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = src;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(src));
-    document.head.appendChild(script);
-  });
-}
-
 function drawFallback(
   canvas: HTMLCanvasElement,
   fleet: FeatureCollection,
@@ -203,7 +179,7 @@ function drawFallback(
   const selected = incidents.find((incident) => incident.id === selectedIncidentId);
   const assigned = fleet.features.find((feature) => feature.id === assignedVehicleId);
   if (selected && assigned) {
-    const geometry = assigned.geometry as { coordinates: Coordinate };
+    const geometry = assigned.geometry as unknown as { coordinates: Coordinate };
     const [fromX, fromY] = point(geometry.coordinates);
     const [toX, toY] = point([selected.lng, selected.lat]);
     ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
@@ -211,7 +187,7 @@ function drawFallback(
   }
 
   fleet.features.forEach((feature) => {
-    const geometry = feature.geometry as { coordinates: Coordinate };
+    const geometry = feature.geometry as unknown as { coordinates: Coordinate };
     const properties = feature.properties as { callsign: string; status: VehicleStatus };
     const [x, y] = point(geometry.coordinates);
     ctx.fillStyle = statusColor[properties.status];
@@ -263,63 +239,65 @@ export function MapCanvas(props: MapCanvasProps) {
 
   useEffect(() => {
     let disposed = false;
-    async function initialize() {
-      try {
-        await Promise.all([
-          loadLocalScript('/vendor/maplibre-gl.js', () => Boolean(window.maplibregl)),
-          loadLocalScript('/vendor/pmtiles.js', () => Boolean(window.pmtiles)),
-        ]);
-        if (disposed || !containerRef.current || !window.maplibregl || !window.pmtiles) return;
-        const protocol = new window.pmtiles.Protocol();
-        protocol.add(new window.pmtiles.PMTiles(`${location.origin}/maps/cartagena.pmtiles`));
-        window.maplibregl.addProtocol('pmtiles', protocol.tile);
-        const map = new window.maplibregl.Map({
-          container: containerRef.current,
-          center: [-75.53, 10.425],
-          zoom: 12.3,
-          attributionControl: false,
-          style: {
-            version: 8,
-            sources: { cartagena: { type: 'vector', url: `pmtiles://${location.origin}/maps/cartagena.pmtiles` } },
-            layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#071019' } }],
+    if (!containerRef.current) return;
+    try {
+      const map = new maplibregl.Map({
+        container: containerRef.current,
+        center: [-75.53, 10.425],
+        zoom: 12.3,
+        // Requerida por la política de uso de tiles de OSM — compacta para no
+        // competir con las tarjetas propias del mapa.
+        attributionControl: { compact: true },
+        style: {
+          version: 8,
+          sources: {
+            osm: {
+              type: 'raster',
+              tiles: [OSM_TILE_URL],
+              tileSize: 256,
+              attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+            },
           },
+          layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
+        },
+      });
+      mapRef.current = map;
+      map.on('load', () => {
+        if (disposed) return;
+        const current = latestRef.current;
+        map.addSource('coverage', { type: 'geojson', data: coverageGeoJson(current.zones, current.coverage) });
+        map.addLayer({ id: 'coverage-fill', type: 'fill', source: 'coverage', paint: {
+          'fill-color': ['match', ['get', 'health'], 'CRITICAL', '#ef4444', 'DEGRADED', '#f59e0b', '#14b8a6'],
+          'fill-opacity': ['match', ['get', 'health'], 'CRITICAL', 0.25, 'DEGRADED', 0.16, 0.08],
+        } });
+        map.addSource('assignment', { type: 'geojson', data: emptyCollection() });
+        map.addLayer({ id: 'assignment-line', type: 'line', source: 'assignment', paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-dasharray': [2, 2] } });
+        map.addSource('incidents', { type: 'geojson', data: incidentGeoJson(current.incidents) });
+        map.addLayer({ id: 'incident-points', type: 'circle', source: 'incidents', paint: {
+          'circle-color': '#fb7185',
+          'circle-radius': ['match', ['get', 'priority'], 'P1', 12, 'P2', 10, 'P3', 8, 6],
+          'circle-stroke-color': '#7f1d1d', 'circle-stroke-width': 2,
+        } });
+        map.on('click', 'incident-points', (event: MapLayerMouseEvent) => {
+          const incidentId = (event.features?.[0] as MapGeoJSONFeature | undefined)?.properties?.id;
+          if (typeof incidentId === 'string') latestRef.current.onSelectIncident(incidentId);
         });
-        mapRef.current = map;
-        map.on('load', () => {
-          const current = latestRef.current;
-          map.addSource('coverage', { type: 'geojson', data: coverageGeoJson(current.zones, current.coverage) });
-          map.addLayer({ id: 'coverage-fill', type: 'fill', source: 'coverage', paint: {
-            'fill-color': ['match', ['get', 'health'], 'CRITICAL', '#ef4444', 'DEGRADED', '#f59e0b', '#14b8a6'],
-            'fill-opacity': ['match', ['get', 'health'], 'CRITICAL', 0.25, 'DEGRADED', 0.16, 0.08],
-          } });
-          map.addSource('assignment', { type: 'geojson', data: emptyCollection() });
-          map.addLayer({ id: 'assignment-line', type: 'line', source: 'assignment', paint: { 'line-color': '#38bdf8', 'line-width': 3, 'line-dasharray': [2, 2] } });
-          map.addSource('incidents', { type: 'geojson', data: incidentGeoJson(current.incidents) });
-          map.addLayer({ id: 'incident-points', type: 'circle', source: 'incidents', paint: {
-            'circle-color': '#fb7185',
-            'circle-radius': ['match', ['get', 'priority'], 'P1', 12, 'P2', 10, 'P3', 8, 6],
-            'circle-stroke-color': '#7f1d1d', 'circle-stroke-width': 2,
-          } });
-          map.on('click', 'incident-points', (event) => {
-            const incidentId = event.features?.[0]?.properties?.id;
-            if (typeof incidentId === 'string') latestRef.current.onSelectIncident(incidentId);
-          });
-          map.addSource('fleet', { type: 'geojson', data: emptyCollection() });
-          map.addLayer({ id: 'fleet-symbols', type: 'symbol', source: 'fleet', layout: {
-            'text-field': ['concat', '●  ', ['get', 'callsign']], 'text-size': 12, 'text-font': ['Open Sans Bold'],
-            'text-allow-overlap': true, 'text-anchor': 'left', 'text-offset': [0.3, 0],
-          }, paint: {
-            'text-color': ['match', ['get', 'status'], 'AVAILABLE', '#2dd4bf', 'EN_ROUTE', '#60a5fa', 'OUT_OF_SERVICE', '#ef4444', '#94a3b8'],
-            'text-halo-color': '#071019', 'text-halo-width': 2,
-          } });
-          setMode('maplibre');
-        });
-      } catch {
-        if (!disposed) setMode('fallback');
-      }
+        map.addSource('fleet', { type: 'geojson', data: emptyCollection() });
+        map.addLayer({ id: 'fleet-symbols', type: 'symbol', source: 'fleet', layout: {
+          'text-field': ['concat', '●  ', ['get', 'callsign']], 'text-size': 12, 'text-font': ['Open Sans Bold'],
+          'text-allow-overlap': true, 'text-anchor': 'left', 'text-offset': [0.3, 0],
+        }, paint: {
+          'text-color': ['match', ['get', 'status'], 'AVAILABLE', '#2dd4bf', 'EN_ROUTE', '#60a5fa', 'OUT_OF_SERVICE', '#ef4444', '#94a3b8'],
+          'text-halo-color': '#071019', 'text-halo-width': 2,
+        } });
+        setMode('maplibre');
+      });
+      map.on('error', () => { if (!disposed) setMode((current) => current === 'loading' ? 'fallback' : current); });
+    } catch {
+      setMode('fallback');
     }
-    void initialize();
-    const timeout = window.setTimeout(() => setMode((current) => current === 'loading' ? 'fallback' : current), 1_200);
+    // Tiles remotos en una red mala pueden tardar — si en 4s no cargó, contingencia.
+    const timeout = window.setTimeout(() => setMode((current) => current === 'loading' ? 'fallback' : current), 4_000);
     return () => {
       disposed = true;
       window.clearTimeout(timeout);
@@ -331,25 +309,25 @@ export function MapCanvas(props: MapCanvasProps) {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !window.maplibregl) return;
+    if (!map) return;
     markerRef.current?.remove();
     const selected = incidents.find((incident) => incident.id === selectedIncidentId);
     if (!selected) return;
     const element = document.createElement('button');
     element.className = 'h-6 w-6 rounded-full border-4 border-white bg-red-500 shadow-[0_0_0_7px_rgba(239,68,68,.25)]';
     element.setAttribute('aria-label', `Incidente seleccionado ${selected.code}`);
-    markerRef.current = new window.maplibregl.Marker({ element })
+    markerRef.current = new maplibregl.Marker({ element })
       .setLngLat([selected.lng, selected.lat])
       .addTo(map);
-    return () => markerRef.current?.remove();
+    return () => { markerRef.current?.remove(); };
   }, [incidents, selectedIncidentId]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.getSource('incidents')) return;
-    map.getSource('incidents')?.setData(incidentGeoJson(incidents));
-    map.getSource('coverage')?.setData(coverageGeoJson(zones, coverage));
-    map.getSource('assignment')?.setData(assignmentGeoJson(
+    geoSource(map, 'incidents')?.setData(incidentGeoJson(incidents));
+    geoSource(map, 'coverage')?.setData(coverageGeoJson(zones, coverage));
+    geoSource(map, 'assignment')?.setData(assignmentGeoJson(
       incidents,
       selectedIncidentId,
       assignedVehicleId,
@@ -363,7 +341,7 @@ export function MapCanvas(props: MapCanvasProps) {
       const current = latestRef.current;
       const fleet = fleetGeoJson(positionsRef.current, now);
       const map = mapRef.current;
-      map?.getSource('fleet')?.setData(fleet);
+      if (map) geoSource(map, 'fleet')?.setData(fleet);
       if (!map && canvasRef.current) drawFallback(
         canvasRef.current,
         fleet,

@@ -50,6 +50,18 @@ export const StopIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const PhoneIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 5c0-.6.4-1 1-1h3.2c.5 0 .9.3 1 .8l1 4c.1.4 0 .8-.3 1.1L7.6 11.2a14 14 0 0 0 5.2 5.2l1.3-2.3c.3-.3.7-.4 1.1-.3l4 1c.5.1.8.5.8 1V19c0 .6-.4 1-1 1h-1.5C9.4 20 4 14.6 4 8V5Z" />
+  </Icon>
+);
+export const PhoneOffIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 5c0-.6.4-1 1-1h3.2c.5 0 .9.3 1 .8l1 4c.1.4 0 .8-.3 1.1l-1.4 1.2M9.4 13.4A14 14 0 0 0 12.6 16.4l1.3-2.3c.3-.3.7-.4 1.1-.3l4 1c.5.1.8.5.8 1V19c0 .6-.4 1-1 1h-1.5c-1.9 0-3.7-.4-5.4-1.1" />
+    <path d="M3 3l18 18" />
+  </Icon>
+);
+
 export const AmbulanceIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M3 8h11v9H3z" />
