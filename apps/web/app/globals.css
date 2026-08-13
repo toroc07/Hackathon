@@ -20,42 +20,45 @@
    ========================================================================== */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* Superficies. Escala tonal, no negro puro: el negro absoluto sobre OLED
-     produce halos alrededor del texto y cansa en lecturas largas. */
-  --surface-base:      #070b14;
-  --surface-raised:    #0f1626;
-  --surface-overlay:   #16203a;
-  --surface-pressed:   #1d2947;
+  /* Superficies. Fondo blanco de marca: la app se usa en la calle, a pleno
+     sol, y un fondo claro con texto oscuro se lee mejor al aire libre que el
+     modo oscuro (menos reflejo y menos fatiga). El blanco es el color del
+     isotipo. */
+  --surface-base:    #ffffff;
+  --surface-raised:  #f4f7fc;
+  --surface-overlay: #eaf0f9;
+  --surface-pressed: #dfe7f3;
 
   /* Texto. Verificado contra --surface-base:
-     primary   ~15.8:1  (AAA)
-     secondary  ~7.9:1  (AAA)
-     muted      ~4.6:1  (AA, solo para texto de apoyo no crítico) */
-  --text-primary:   #f5f8ff;
-  --text-secondary: #aebbd4;
-  --text-muted:     #7286a5;
+     primary   ~16.5:1  (AAA)
+     secondary  ~9.3:1  (AAA)
+     muted      ~4.9:1  (AA, solo para texto de apoyo no crítico) */
+  --text-primary:   #0b1526;
+  --text-secondary: #3e4d66;
+  --text-muted:     #64748b;
 
-  /* Emergencia. Es el color de acción, se reserva para eso: si todo grita,
-     nada grita. */
-  --emergency:         #ff4557;
-  --emergency-hover:   #ff6472;
-  --emergency-pressed: #e02b3d;
-  --emergency-soft:    rgba(255, 69, 87, 0.14);
-  --emergency-ring:    rgba(255, 69, 87, 0.30);
+  /* Emergencia. Rojo de marca, oscurecido para pasar AAA como texto sobre
+     blanco; se reserva para la acción principal. */
+  --emergency:         #d90429;
+  --emergency-hover:   #ef2346;
+  --emergency-pressed: #b00424;
+  --emergency-soft:    rgba(217, 4, 41, 0.10);
+  --emergency-ring:    rgba(217, 4, 41, 0.26);
 
-  /* Estados. Cada uno se acompaña SIEMPRE de icono o texto: el color por sí
+  /* Estados. Versiones oscuras: sobre blanco, los neones del modo oscuro se
+     pierden. Cada uno se acompaña SIEMPRE de icono o texto: el color por sí
      solo no comunica (daltonismo, sol directo, pantalla en escala de grises). */
-  --ok:      #34d99a;
-  --ok-soft: rgba(52, 217, 154, 0.14);
-  --warn:      #ffb224;
-  --warn-soft: rgba(255, 178, 36, 0.14);
-  --info:      #4cc4ff;
-  --info-soft: rgba(76, 196, 255, 0.14);
+  --ok:      #047857;
+  --ok-soft: rgba(4, 120, 87, 0.10);
+  --warn:      #b45309;
+  --warn-soft: rgba(180, 83, 9, 0.12);
+  --info:      #0369a1;
+  --info-soft: rgba(3, 105, 161, 0.12);
 
-  --border-subtle: rgba(174, 187, 212, 0.14);
-  --border-strong: rgba(174, 187, 212, 0.28);
+  --border-subtle: rgba(11, 21, 38, 0.10);
+  --border-strong: rgba(11, 21, 38, 0.20);
 
   /* Ritmo de 4/8px. */
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
@@ -130,6 +133,40 @@ body {
 }
 .animate-pulse-ring { animation: pulse-ring 2s var(--motion-enter) infinite; }
 
+/* Entrada de secciones: la pantalla se compone en su orden natural (cabecera,
+   botón, confirmación) sin que el ojo tenga que buscar. */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 380ms var(--motion-enter) both; }
+
+/* La confirmación llega como un objeto, no como texto plano. */
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in { animation: scale-in 320ms var(--motion-enter) both; }
+
+/* Invitación a tocar en reposo: un anillo que respira alrededor del botón de
+   grabar. Sin esto, el botón "Grabar" en reposo parece un elemento muerto. */
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 var(--emergency-ring); }
+  50%      { box-shadow: 0 0 0 16px rgba(217, 4, 41, 0); }
+}
+.animate-breathe { animation: breathe 2.4s var(--motion-enter) infinite; }
+
+/* Spinner del envío: mientras se sube el audio no hay nada que mirar, pero el
+   movimiento dice que el proceso sigue vivo. */
+.spinner {
+  width: 20px; height: 20px;
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Respeta la preferencia del sistema. Personas con trastornos vestibulares o
    migraña pueden marearse con movimiento; y aquí ya están bajo estrés. */
 @media (prefers-reduced-motion: reduce) {
@@ -145,9 +182,9 @@ body {
    intermedias que se vuelven invisibles al aire libre. */
 @media (prefers-contrast: more) {
   :root {
-    --text-secondary: #d6e0f2;
-    --text-muted:     #aebbd4;
-    --border-subtle:  rgba(174, 187, 212, 0.34);
-    --border-strong:  rgba(174, 187, 212, 0.55);
+    --text-secondary: #233250;
+    --text-muted:     #3e4d66;
+    --border-subtle:  rgba(11, 21, 38, 0.24);
+    --border-strong:  rgba(11, 21, 38, 0.44);
   }
 }
