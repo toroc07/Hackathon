@@ -91,9 +91,10 @@ export function TrackingMap({ tracking }: Props) {
       // Perseguir el objetivo suavemente (~12% por frame ≈ 0.5s para cubrir).
       const target = targetRef.current;
       if (target && shownRef.current) {
+        const factor = reduceMotion ? 1 : 0.12;
         shownRef.current = {
-          lat: shownRef.current.lat + (target.lat - shownRef.current.lat) * 0.12,
-          lng: shownRef.current.lng + (target.lng - shownRef.current.lng) * 0.12,
+          lat: shownRef.current.lat + (target.lat - shownRef.current.lat) * factor,
+          lng: shownRef.current.lng + (target.lng - shownRef.current.lng) * factor,
         };
       }
       const vehicle = shownRef.current;
