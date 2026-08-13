@@ -45,8 +45,8 @@ export async function findReportByIdempotencyKey(q: Queryable, key: string): Pro
   return row ? mapReport(row) : null;
 }
 
-export function findIncidentForReport(q: Queryable, report: IncidentReport): Promise<Incident | null> {
-  return findIncident(q, report.incidentId);
+export async function findIncidentForReport(q: Queryable, report: IncidentReport): Promise<Incident | null> {
+  return await findIncident(q, report.incidentId);
 }
 
 export async function listRecentLiveIncidents(q: Queryable, since: number): Promise<Incident[]> {
@@ -170,7 +170,7 @@ export async function readAssignmentContext(q: Queryable, incidentId: string) {
     },
     isStale: vehicleRow.recorded_at == null || Date.now() - (vehicleRow.recorded_at as number) > 60_000,
   }) : null;
-  const etaRow = await q.one<Row>(`
+  const etaRow = await q.one<Row & { eta_seconds: number }>(`
     SELECT dc.eta_seconds
     FROM dispatch_candidates dc
     JOIN dispatch_runs dr ON dr.id = dc.dispatch_run_id
@@ -181,6 +181,6 @@ export async function readAssignmentContext(q: Queryable, incidentId: string) {
   return {
     assignment,
     assignedVehicle,
-    liveEtaSeconds: etaRow?.eta_seconds == null ? null : etaRow.eta_seconds as number,
+    liveEtaSeconds: etaRow?.eta_seconds ?? null,
   };
 }

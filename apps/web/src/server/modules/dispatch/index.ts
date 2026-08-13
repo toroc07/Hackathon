@@ -19,9 +19,15 @@ export const startTransport = (
 export const completeAssignment = complete;
 export async function expireStaleOffers(options: DispatchOptions = {}) {
   const expired = await expireOffers(options);
-  return Promise.all(expired.map(async (assignment) => ({
-    assignment,
-    dispatch: await executeDispatch(assignment.incidentId, { mode: 'AUTO_ASSIGN', excludeVehicleIds: [assignment.vehicleId] }, { ...options, triggeredBy: 'TIMEOUT' }),
-  })));
+  const results = [];
+  for (const assignment of expired) {
+    const dispatch = await executeDispatch(
+      assignment.incidentId,
+      { mode: 'AUTO_ASSIGN', excludeVehicleIds: [assignment.vehicleId] },
+      { ...options, triggeredBy: 'TIMEOUT' },
+    );
+    results.push({ assignment, dispatch });
+  }
+  return results;
 }
 export const getCandidates = getPersistedCandidates;

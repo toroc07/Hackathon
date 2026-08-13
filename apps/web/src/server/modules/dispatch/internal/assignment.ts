@@ -10,9 +10,9 @@ import {
   type RejectReason,
   type VehicleStatus,
 } from '@dispatch/contracts';
-import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
+import { newId, tx, type Queryable } from '@/src/server/infra/db';
 
-interface AssignmentRow extends Record<string, unknown> {
+export interface AssignmentRow extends Record<string, unknown> {
   id: string; incident_id: string; vehicle_id: string; dispatch_run_id: string | null;
   status: AssignmentStatus; offered_at: number; expires_at: number; responded_at: number | null;
   reject_reason: RejectReason | null; en_route_at: number | null; arrived_at: number | null;
@@ -68,7 +68,8 @@ async function getAssignmentState(q: Queryable, assignmentId: string): Promise<A
   const row = await q.one<AssignmentStateRow>(`
     SELECT a.*, i.status AS incident_status, v.status AS vehicle_status
     FROM assignments a JOIN incidents i ON i.id = a.incident_id
-    JOIN vehicles v ON v.id = a.vehicle_id WHERE a.id = ?`, [assignmentId]);
+    JOIN vehicles v ON v.id = a.vehicle_id WHERE a.id = ?
+    FOR UPDATE OF a, i, v`, [assignmentId]);
   if (!row) throw new DispatchNotFoundError('Asignación', assignmentId);
   return row;
 }

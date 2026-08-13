@@ -3,13 +3,15 @@ import {
   assertIncidentTransition,
   assertVehicleTransition,
   type Assignment,
+  type IncidentStatus,
+  type VehicleStatus,
 } from '@dispatch/contracts';
 import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
-import { mapAssignment } from './assignment';
+import { mapAssignment, type AssignmentRow } from './assignment';
 
-interface ExpiredRow extends Record<string, unknown> {
-  id: string; incident_id: string; vehicle_id: string; status: 'OFFERED';
-  incident_status: 'ASSIGNING'; vehicle_status: 'RESERVED';
+interface ExpiredRow extends AssignmentRow {
+  incident_status: IncidentStatus;
+  vehicle_status: VehicleStatus;
 }
 
 export interface ExpireOffersOptions {
@@ -27,7 +29,7 @@ export async function expireOffers(options: ExpireOffersOptions = {}): Promise<A
 
   for (const row of stale) {
     const operation = async (t: Queryable): Promise<Assignment | null> => {
-      const changed = await t.one<ExpiredRow>(`UPDATE assignments SET status = 'EXPIRED', responded_at = ?
+      const changed = await t.one<AssignmentRow>(`UPDATE assignments SET status = 'EXPIRED', responded_at = ?
         WHERE id = ? AND status = 'OFFERED' AND expires_at < ? RETURNING *`, [now, row.id, now]);
       if (!changed) return null;
       assertAssignmentTransition(row.status, 'EXPIRED');

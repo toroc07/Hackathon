@@ -94,7 +94,11 @@ class MemoryQueryable implements Queryable {
     } else if (normalized.startsWith('update incidents set ')) {
       const incidentId = params.at(-1);
       const columns = normalized.slice('update incidents set '.length, normalized.indexOf(' where id = ?')).split(', ');
-      this.updateIncident(incidentId, Object.fromEntries(columns.map((assignment, index) => [assignment.split(' = ')[0]!, params[index]])));
+      this.updateIncident(incidentId, Object.fromEntries(columns.map((assignment, index) => {
+        const column = assignment.split(' = ')[0];
+        if (!column) throw new Error(`Asignación SQL inválida: ${assignment}`);
+        return [column, params[index]];
+      })));
     } else {
       throw new Error(`Consulta run no implementada: ${normalized}`);
     }
@@ -110,14 +114,20 @@ class MemoryQueryable implements Queryable {
   }
 }
 
-const databaseState = vi.hoisted(() => ({ current: null as Queryable | null }));
+const databaseState = vi.hoisted(() => ({
+  current: null as Queryable | null,
+  get(): Queryable {
+    if (!this.current) throw new Error('No hay Queryable de prueba activo');
+    return this.current;
+  },
+}));
 
 vi.mock('@/src/server/infra/db', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/src/server/infra/db')>();
   return {
     ...original,
-    db: () => databaseState.current!,
-    tx: async <T>(fn: (q: Queryable) => Promise<T>) => fn(databaseState.current!),
+    db: () => databaseState.get(),
+    tx: async <T>(fn: (q: Queryable) => Promise<T>) => fn(databaseState.get()),
   };
 });
 
@@ -146,7 +156,9 @@ describe('incident engine', () => {
     expect(q.incidents).toHaveLength(1);
     expect(q.reports).toHaveLength(4);
     expect(results.map((result) => result.wasMerged)).toEqual([false, true, true, true]);
-    expect((await getIncidentDetail(results[0]!.incident.id, q)).reports).toHaveLength(4);
+    const firstResult = results[0];
+    if (!firstResult) throw new Error('El escenario no produjo resultados');
+    expect((await getIncidentDetail(firstResult.incident.id, q)).reports).toHaveLength(4);
   });
 
   it('no fusiona dos tipos incompatibles separados por cerca de 100 metros', async () => {

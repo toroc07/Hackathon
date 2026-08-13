@@ -248,8 +248,8 @@ export async function getIncidentDetail(incidentId: string, q: Queryable = db())
   };
 }
 
-export function listLiveIncidents(q: Queryable = db()): Promise<Incident[]> {
-  return listLive(q);
+export async function listLiveIncidents(q: Queryable = db()): Promise<Incident[]> {
+  return await listLive(q);
 }
 
 export async function updateIncident(
@@ -260,7 +260,7 @@ export async function updateIncident(
   if ('status' in request) {
     throw new HttpError(400, 'VALIDATION_FAILED', 'Los clientes envían acciones, no status');
   }
-  if (request.cancel) return await cancelIncident(incidentId, request.cancel.reason, options);
+  if (request.cancel) return cancelIncident(incidentId, request.cancel.reason, options);
   const now = options.now ?? Date.now();
   const updated = await tx(async (t) => {
     await requireIncident(t, incidentId);
