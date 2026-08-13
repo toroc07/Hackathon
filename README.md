@@ -31,9 +31,12 @@ Luego abre:
 
 ### Base de datos
 
-Necesitas un PostgreSQL. Opciones: **Vercel Postgres** (Storage → Create),
-[Neon](https://neon.tech) en tier gratuito, o uno local.
-Pon la connection string en `DATABASE_URL` dentro de `.env.local`.
+Necesitas un PostgreSQL. La base compartida del equipo vive en
+[Neon](https://neon.tech) (ver `carpeta pg_api/`). Alternativas:
+**Vercel Postgres** (Storage → Create) o uno local.
+Pon la connection string en `DATABASE_URL` dentro de `.env.local`
+(usa la URL de Neon del `.env.example`; reemplaza `TU_PASSWORD` por la
+real del panel de Neon).
 
 > `.env.local` está en `.gitignore`. **Nunca subas credenciales al repo.**
 
@@ -42,6 +45,33 @@ Pon la connection string en `DATABASE_URL` dentro de `.env.local`.
 | `npm run db:migrate` | Aplica migraciones pendientes. **No destructivo** — es el que corres normalmente |
 | `npm run db:seed` | Siembra 30 ambulancias en 6 zonas de Cartagena |
 | `npm run db:reset` | **BORRA EL ESQUEMA COMPLETO** y lo recrea. Se niega a correr contra una base remota salvo `ALLOW_REMOTE_RESET=true` |
+
+### API genérica de la base (`carpeta pg_api/`)
+
+El equipo subió una API **FastAPI + Postgres (Neon)** que detecta las tablas
+de la base automáticamente (SQLAlchemy `automap`) y genera endpoints CRUD
+para cada una — sin escribir modelos a mano:
+
+| Endpoint | Qué hace |
+|---|---|
+| `GET /{tabla}` | Lista con paginación (`?skip=0&limit=50`) |
+| `GET /{tabla}/{id}` | Un registro por su primary key |
+| `POST /{tabla}` | Crea un registro |
+| `PUT /{tabla}/{id}` | Actualiza un registro |
+| `DELETE /{tabla}/{id}` | Borra un registro |
+
+Correrla (en `carpeta pg_api/`):
+
+```bash
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                               # pega la DATABASE_URL real de Neon
+uvicorn main:app --reload                          # docs en http://127.0.0.1:8000/docs
+```
+
+> El `.env` de `carpeta pg_api/` también está en `.gitignore`. Las tablas sin
+> primary key solo generan listado (`GET`); las de PK compuesta no tienen
+> `GET/{id}`, `PUT` ni `DELETE` individuales en esta versión genérica.
 
 ---
 

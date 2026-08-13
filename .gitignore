@@ -22,6 +22,10 @@ packages/db/data/
 .env.*
 !.env.example
 
+# Python (API pg)
+__pycache__/
+*.pyc
+
 # Logs / temporales
 *.log
 .DS_Store
