@@ -1,6 +1,7 @@
 import { MAX_AUDIO_BYTES, zAudioReportRequest } from '@dispatch/contracts';
 import { apiErrorResponse, HttpError } from '@/src/server/infra/errors';
 import { createIncidentFromAudio } from '@/src/server/modules/incidents';
+import { runDispatch } from '@/src/server/modules/dispatch';
 import { readIdempotencyKey, readJson } from '../_shared';
 
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,19 @@ export async function POST(request: Request): Promise<Response> {
       idempotencyKey: readIdempotencyKey(request),
       actorType: 'REPORTER',
     });
+
+    // No hay Command Center: el único panel de ambulancia (universal, es
+    // demo) depende de que la asignación exista apenas llega el reporte. Si
+    // el despacho falla (p. ej. ninguna unidad con ubicación fresca) el
+    // ciudadano igual recibe su código de seguimiento — el panel simplemente
+    // no verá asignación todavía.
+    if (!result.wasMerged) {
+      try {
+        await runDispatch(result.incidentId, { mode: 'AUTO_ASSIGN' }, { triggeredBy: 'AUTO' });
+      } catch (dispatchError) {
+        console.error('auto-dispatch falló tras reporte de audio', dispatchError);
+      }
+    }
 
     return Response.json(result, { status: 201 });
   } catch (error) {

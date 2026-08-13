@@ -19,6 +19,14 @@ import {
 /** org_id fijo: la demo es de una sola operadora. */
 const ORG_ID = 'org-ems';
 
+/** Ambulancia "universal" de la demo — no hay login de unidad ni selector
+ *  (§ remodel: un solo panel de responder recibe todo, sin importar el tipo
+ *  de emergencia). RESCUE es el nivel más alto de packages/db/seed
+ *  (`meetsCapability` compara por rango): así nunca queda excluida del
+ *  despacho por capacidad insuficiente, sea cual sea el incidente. Su turno y
+ *  ubicación ya vienen activos desde el seed. */
+export const UNIVERSAL_VEHICLE_ID = 'seed-vehicle-05';
+
 /** Alta de una ambulancia nueva — placa + unidad + hospital (§33). Arranca
  *  OFFLINE; el responder la ve en el selector e inicia turno como cualquier
  *  otra unidad de la flota sembrada. */
