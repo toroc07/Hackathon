@@ -8,7 +8,7 @@ import {
   type ScoringWeights,
 } from '@dispatch/contracts';
 import { coverageEffect } from './coverage';
-import { dispatchDatabase, type DispatchDataAccess } from './data';
+import { dispatchDatabase, type Queryable } from './data';
 import { explainCandidate, explainExclusion, explainRecommendation } from './explain';
 import { scoreCandidate } from './scoring';
 import type { IncidentRow, VehicleRow, ZoneRow } from './types';
@@ -41,16 +41,15 @@ function excludedCandidate(
   };
 }
 
-export function loadDispatchInputs(database?: DispatchDataAccess): {
-  incident: (id: string) => IncidentRow | undefined;
-  vehicles: () => VehicleRow[];
-  zones: () => ZoneRow[];
+export function loadDispatchInputs(q: Queryable = dispatchDatabase()): {
+  incident: (id: string) => Promise<IncidentRow | undefined>;
+  vehicles: () => Promise<VehicleRow[]>;
+  zones: () => Promise<ZoneRow[]>;
 } {
-  const db = dispatchDatabase(database);
   return {
-    incident: (id) => {
+    incident: async (id) => {
       try {
-        const incident = getIncidentDetail(id, db as never).incident;
+        const incident = (await getIncidentDetail(id, q)).incident;
         return {
           id: incident.id, status: incident.status, lat: incident.lat, lng: incident.lng,
           zone_id: incident.zoneId, required_capability: incident.requiredCapability,
@@ -60,16 +59,16 @@ export function loadDispatchInputs(database?: DispatchDataAccess): {
         throw error;
       }
     },
-    vehicles: () => {
-      const jobs = new Map((db.prepare(`SELECT assignments.vehicle_id AS vehicle_id, COUNT(*) AS recent_jobs FROM assignments
+    vehicles: async () => {
+      const jobRows = await q.many<{ vehicle_id: string; recent_jobs: number } & Record<string, unknown>>(`SELECT assignments.vehicle_id AS vehicle_id, COUNT(*) AS recent_jobs FROM assignments
         JOIN vehicles ON vehicles.id = assignments.vehicle_id
         JOIN shifts ON shifts.id = vehicles.active_shift_id
         WHERE assignments.status = 'COMPLETED'
           AND assignments.completed_at >= shifts.started_at
           AND (shifts.ended_at IS NULL OR assignments.completed_at <= shifts.ended_at)
-        GROUP BY assignments.vehicle_id`).all() as Array<{ vehicle_id: string; recent_jobs: number }>)
-        .map((row) => [row.vehicle_id, Number(row.recent_jobs)]));
-      return listVehicles({}, db as never).map((vehicle) => ({
+        GROUP BY assignments.vehicle_id`);
+      const jobs = new Map(jobRows.map((row) => [row.vehicle_id, Number(row.recent_jobs)]));
+      return (await listVehicles({}, q)).map((vehicle) => ({
         id: vehicle.id, callsign: vehicle.callsign, status: vehicle.status,
         capability_level: vehicle.capabilityLevel, operating_zone_id: vehicle.operatingZoneId,
         current_assignment_id: vehicle.currentAssignmentId, lat: vehicle.location?.lat ?? null,
@@ -77,11 +76,14 @@ export function loadDispatchInputs(database?: DispatchDataAccess): {
         recent_jobs: jobs.get(vehicle.id) ?? 0,
       }));
     },
-    zones: () => db.prepare(`
+    zones: async () => {
+      const rows = await q.many<ZoneRow & Record<string, unknown>>(`
       SELECT z.id, z.name, z.target_coverage_units, z.population_weight,
              COALESCE(SUM(CASE WHEN v.status = 'AVAILABLE' THEN 1 ELSE 0 END), 0) AS available_units
       FROM zones z LEFT JOIN vehicles v ON v.operating_zone_id = z.id
-      GROUP BY z.id, z.name, z.target_coverage_units, z.population_weight`).all() as unknown as ZoneRow[],
+      GROUP BY z.id, z.name, z.target_coverage_units, z.population_weight`);
+      return rows.map((row) => ({ ...row, available_units: Number(row.available_units) }));
+    },
   };
 }
 

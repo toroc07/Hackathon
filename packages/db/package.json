@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "db:reset": "tsx src/reset.ts",
-    "db:seed": "tsx seed/index.ts"
+    "db:seed": "tsx src/seed-cli.ts",
+    "db:migrate": "tsx src/migrate-cli.ts"
   },
   "dependencies": {
     "@dispatch/contracts": "*",
