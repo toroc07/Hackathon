@@ -1,7 +1,6 @@
 import { zIncidentType } from '@dispatch/contracts';
 import { apiErrorResponse, HttpError } from '@/src/server/infra/errors';
-import { getTracking } from '@/src/server/modules/incidents/internal/tracking';
-import { confirmIncidentType } from '@/src/server/modules/incidents/internal/audio-intake';
+import { confirmIncidentType, getTracking } from '@/src/server/modules/incidents';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

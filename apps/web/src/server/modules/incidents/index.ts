@@ -304,3 +304,5 @@ export async function appendEvent(input: AppendEventInput, q: Queryable = db()):
 
 export { areIncidentTypesCompatible, decideDeduplication } from './internal/dedup';
 export { applyTriage } from './internal/triage';
+export { confirmIncidentType, createIncidentFromAudio } from './internal/audio-intake';
+export { getTracking } from './internal/tracking';

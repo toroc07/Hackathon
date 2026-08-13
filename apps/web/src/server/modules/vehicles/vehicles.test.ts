@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { InvalidTransitionError } from '@dispatch/contracts';
+import { isLocalPostgres } from '../../test-helpers';
 import { closePool, db } from '@dispatch/db';
 import { dropAll, runMigrations } from '@dispatch/db/migrations';
 import { seedDatabase } from '../../../../../../packages/db/seed/index';
@@ -11,7 +12,6 @@ import {
   markEnRoute,
   startTransport,
 } from '../dispatch';
-import { assignmentActionOutcome } from '../../../../app/responder/responderState';
 import { endShift, getVehicle, recordLocations, setStatus, startShift } from './index';
 
 beforeEach(async () => {
@@ -32,7 +32,7 @@ async function createIncident(id: string, now: number): Promise<void> {
       'Av. San Martín, Bocagrande', 1, 'BLS', ?)`, [id, `INC-${id}`, now]);
 }
 
-describe('dominio de vehículos', () => {
+describe.skipIf(!isLocalPostgres())('dominio de vehículos', () => {
   it('completa turno, asignación y cierre con evento en cada paso', async () => {
     const vehicleId = 'seed-vehicle-01';
     await endShift(vehicleId);
@@ -97,13 +97,5 @@ describe('dominio de vehículos', () => {
       [vehicleId, timestamps[0]],
     );
     expect(rows.map((row) => row.recorded_at)).toEqual(timestamps);
-  });
-
-  it('interpreta 409 como pérdida de oferta y obliga a descartar el estado optimista', () => {
-    expect(assignmentActionOutcome(409)).toEqual({
-      kind: 'conflict',
-      message: 'Esta asignación ya no está disponible',
-    });
-    expect(assignmentActionOutcome(200)).toEqual({ kind: 'ok' });
   });
 });

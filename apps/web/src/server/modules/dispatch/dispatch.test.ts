@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { totalScore } from '@dispatch/contracts';
+import { isLocalPostgres } from '../../test-helpers';
 import { db, type Queryable } from '@dispatch/db';
 import { dropAll, runMigrations } from '@dispatch/db/migrations';
 import { runDispatch, assignVehicle, expireStaleOffers } from './index';
@@ -51,7 +52,7 @@ async function addVehicle(q: Queryable, input: {
     VALUES (?, ?, ?, ?)`, [input.id, input.lat, input.lng, input.recordedAt]);
 }
 
-describe('dispatch engine', () => {
+describe.skipIf(!isLocalPostgres())('dispatch engine', () => {
   let q: Queryable;
 
   beforeEach(async () => {
