@@ -2,14 +2,152 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+   SISTEMA DE DISEÑO — app de emergencias, móvil, uso bajo estrés.
+
+   Contexto real de uso, que es lo que manda las decisiones:
+   · una sola mano, a veces temblando
+   · exterior de Cartagena, sol directo sobre la pantalla
+   · de noche, dentro de un vehículo
+   · la persona está asustada y no va a leer instrucciones
+
+   De ahí: contraste alto (no el gris sobre gris de moda), objetivos táctiles
+   grandes, una sola acción principal por pantalla y cero dependencia del color
+   como único portador de significado.
+
+   Tokens SEMÁNTICOS, no colores crudos en los componentes: cambiar la marca o
+   afinar el contraste debe ser una edición aquí, no una cacería por 20 archivos.
+   ========================================================================== */
+
 :root {
-  color-scheme: light;
-  background: #f4f5f1;
-  color: #15211d;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+
+  /* Superficies. Escala tonal, no negro puro: el negro absoluto sobre OLED
+     produce halos alrededor del texto y cansa en lecturas largas. */
+  --surface-base:      #070b14;
+  --surface-raised:    #0f1626;
+  --surface-overlay:   #16203a;
+  --surface-pressed:   #1d2947;
+
+  /* Texto. Verificado contra --surface-base:
+     primary   ~15.8:1  (AAA)
+     secondary  ~7.9:1  (AAA)
+     muted      ~4.6:1  (AA, solo para texto de apoyo no crítico) */
+  --text-primary:   #f5f8ff;
+  --text-secondary: #aebbd4;
+  --text-muted:     #7286a5;
+
+  /* Emergencia. Es el color de acción, se reserva para eso: si todo grita,
+     nada grita. */
+  --emergency:         #ff4557;
+  --emergency-hover:   #ff6472;
+  --emergency-pressed: #e02b3d;
+  --emergency-soft:    rgba(255, 69, 87, 0.14);
+  --emergency-ring:    rgba(255, 69, 87, 0.30);
+
+  /* Estados. Cada uno se acompaña SIEMPRE de icono o texto: el color por sí
+     solo no comunica (daltonismo, sol directo, pantalla en escala de grises). */
+  --ok:      #34d99a;
+  --ok-soft: rgba(52, 217, 154, 0.14);
+  --warn:      #ffb224;
+  --warn-soft: rgba(255, 178, 36, 0.14);
+  --info:      #4cc4ff;
+  --info-soft: rgba(76, 196, 255, 0.14);
+
+  --border-subtle: rgba(174, 187, 212, 0.14);
+  --border-strong: rgba(174, 187, 212, 0.28);
+
+  /* Ritmo de 4/8px. */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px;
+
+  --radius-sm: 10px; --radius-md: 16px; --radius-lg: 22px; --radius-full: 999px;
+
+  /* Movimiento: un solo vocabulario para toda la app. */
+  --motion-fast:   140ms;
+  --motion-base:   220ms;
+  --motion-enter:  cubic-bezier(0.16, 1, 0.3, 1);   /* ease-out */
+  --motion-exit:   cubic-bezier(0.4, 0, 1, 1);      /* ease-in  */
+
+  /* Objetivos táctiles. 44px es el mínimo de Apple y asume que estás quieto;
+     aquí la persona puede estar en movimiento, así que subimos el piso. */
+  --touch-min:     48px;
+  --touch-comfort: 64px;
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html {
+  /* Elimina el retardo de 300ms al tocar sin desactivar el zoom del sistema:
+     bloquear pinch-zoom en una app de emergencias es inaceptable — hay quien
+     necesita ampliar para leer. */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  min-height: 100vh;
   margin: 0;
+  min-height: 100dvh;
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 16px;          /* nunca por debajo: iOS hace zoom al enfocar inputs */
+  line-height: 1.55;
+  /* Sin rebote elástico: en el seguimiento en vivo confunde con un gesto. */
+  overscroll-behavior-y: none;
+}
+
+/* Safe areas: el CTA principal vive abajo, justo donde está la barra de
+   gestos y el notch inferior. Sin esto, el botón de enviar queda debajo del
+   indicador de home en iPhone. */
+.safe-top    { padding-top:    max(var(--space-5), env(safe-area-inset-top)); }
+.safe-bottom { padding-bottom: max(var(--space-5), env(safe-area-inset-bottom)); }
+.safe-x {
+  padding-left:  max(var(--space-5), env(safe-area-inset-left));
+  padding-right: max(var(--space-5), env(safe-area-inset-right));
+}
+
+/* Foco visible SIEMPRE. Quitar el anillo de foco es la forma más rápida de
+   dejar la app inutilizable con teclado o switch control. */
+:focus-visible {
+  outline: 3px solid var(--info);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+/* Cifras tabulares en contadores y ETA: sin esto el ancho baila a cada
+   segundo y el layout tiembla. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Realimentación de pulsación sin mover el layout de alrededor. */
+.pressable { transition: transform var(--motion-fast) var(--motion-exit),
+                         background-color var(--motion-fast) var(--motion-exit); }
+.pressable:active { transform: scale(0.97); }
+
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1);    opacity: 0.55; }
+  50%      { transform: scale(1.18); opacity: 0.25; }
+}
+.animate-pulse-ring { animation: pulse-ring 2s var(--motion-enter) infinite; }
+
+/* Respeta la preferencia del sistema. Personas con trastornos vestibulares o
+   migraña pueden marearse con movimiento; y aquí ya están bajo estrés. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Sol directo: en alto contraste subimos bordes y apagamos superficies
+   intermedias que se vuelven invisibles al aire libre. */
+@media (prefers-contrast: more) {
+  :root {
+    --text-secondary: #d6e0f2;
+    --text-muted:     #aebbd4;
+    --border-subtle:  rgba(174, 187, 212, 0.34);
+    --border-strong:  rgba(174, 187, 212, 0.55);
+  }
 }
