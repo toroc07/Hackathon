@@ -6,7 +6,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     const input = zDispatchRequest.parse(await optionalJson(request));
-    const result = runDispatch(id, input, {
+    const result = await runDispatch(id, input, {
       idempotencyKey: request.headers.get('Idempotency-Key'),
       triggeredBy: 'DISPATCHER',
     });

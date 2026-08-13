@@ -9,7 +9,7 @@ export async function POST(request: Request, context: Context): Promise<Response
   try {
     const input = zCreateIncidentRequest.parse(await readJson(request));
     const { id } = await context.params;
-    const result = appendReportToIncident(id, input, {
+    const result = await appendReportToIncident(id, input, {
       idempotencyKey: readIdempotencyKey(request),
       actorType: 'DISPATCHER',
     });

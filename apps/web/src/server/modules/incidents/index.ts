@@ -13,7 +13,7 @@ import {
 } from '@dispatch/contracts';
 import type { z } from 'zod';
 import { bus } from '@/src/server/infra/bus';
-import { getDatabase, newId, type SqliteDatabase } from '@/src/server/infra/db';
+import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
 import { HttpError } from '@/src/server/infra/errors';
 import { decideDeduplication, LIVE_LOOKBACK_MS } from './internal/dedup';
 import { appendIncidentEvent, type AppendEventInput } from './internal/events';
@@ -38,7 +38,6 @@ import { applyTriage } from './internal/triage';
 export type UpdateIncidentRequest = z.infer<typeof zUpdateIncidentRequest>;
 
 export interface IncidentEngineOptions {
-  db?: SqliteDatabase;
   now?: number;
   actorType?: ActorType;
   actorId?: string | null;
@@ -53,20 +52,20 @@ const CAPABILITY_RANK: Record<NonNullable<Incident['requiredCapability']>, numbe
   RESCUE: 3,
 };
 
-function requireIncident(db: SqliteDatabase, incidentId: string): Incident {
-  const incident = findIncident(db, incidentId);
+async function requireIncident(q: Queryable, incidentId: string): Promise<Incident> {
+  const incident = await findIncident(q, incidentId);
   if (!incident) throw new HttpError(404, 'NOT_FOUND', 'Incidente no encontrado');
   return incident;
 }
 
-function transitionIncident(
-  db: SqliteDatabase,
+async function transitionIncident(
+  q: Queryable,
   incident: Incident,
   next: IncidentStatus,
   closedAt: number | null = null,
-): Incident {
+): Promise<Incident> {
   assertIncidentTransition(incident.status, next);
-  setIncidentStatus(db, incident.id, next, closedAt);
+  await setIncidentStatus(q, incident.id, next, closedAt);
   return { ...incident, status: next, closedAt };
 }
 
@@ -74,11 +73,11 @@ function incidentCode(id: string): string {
   return `INC-${id.slice(-3)}`;
 }
 
-function idempotentResult(db: SqliteDatabase, key?: string | null): CreateIncidentResponse | null {
+async function idempotentResult(q: Queryable, key?: string | null): Promise<CreateIncidentResponse | null> {
   if (!key) return null;
-  const report = findReportByIdempotencyKey(db, key);
+  const report = await findReportByIdempotencyKey(q, key);
   if (!report) return null;
-  const incident = findIncidentForReport(db, report);
+  const incident = await findIncidentForReport(q, report);
   if (!incident) throw new Error('Reporte idempotente sin incidente asociado');
   return {
     incident,
@@ -98,22 +97,21 @@ function shouldEscalate(current: Incident, result: TriageResult): boolean {
     || CAPABILITY_RANK[result.requiredCapability] > CAPABILITY_RANK[current.requiredCapability];
 }
 
-export function createIncidentFromReport(
+export async function createIncidentFromReport(
   request: CreateIncidentRequest,
   options: IncidentEngineOptions = {},
-): CreateIncidentResponse {
-  const db = options.db ?? getDatabase();
+): Promise<CreateIncidentResponse> {
   const now = options.now ?? Date.now();
   const actorType = options.actorType ?? 'REPORTER';
   let emittedTopic: 'incident:created' | 'incident:merged' | null = null;
-  const result = db.transaction(() => {
-    const previous = idempotentResult(db, options.idempotencyKey);
+  const result = await tx(async (t) => {
+    const previous = await idempotentResult(t, options.idempotencyKey);
     if (previous) return previous;
 
     const triageResult = applyTriage(request.type, signalsFor(request));
     const decision = decideDeduplication(
       { type: request.type, point: request.point, accuracyM: request.accuracyM, createdAt: now },
-      listRecentLiveIncidents(db, now - LIVE_LOOKBACK_MS),
+      await listRecentLiveIncidents(t, now - LIVE_LOOKBACK_MS),
     );
 
     if (decision.kind === 'MERGE') {
@@ -125,8 +123,8 @@ export function createIncidentFromReport(
         wasMerged: true, mergeConfidence: decision.confidence,
         mergeReason: decision.reason, createdAt: now,
       };
-      insertReport(db, report, options.idempotencyKey ?? undefined);
-      appendIncidentEvent(db, {
+      await insertReport(t, report, options.idempotencyKey ?? undefined);
+      await appendIncidentEvent(t, {
         incidentId: decision.incident.id, eventType: 'REPORT_MERGED', actorType,
         actorId: options.actorId, createdAt: now,
         metadata: { reportId: report.id, confidence: decision.confidence, reason: decision.reason },
@@ -138,18 +136,18 @@ export function createIncidentFromReport(
         const capability = !decision.incident.requiredCapability
           || CAPABILITY_RANK[triageResult.requiredCapability] > CAPABILITY_RANK[decision.incident.requiredCapability]
           ? triageResult.requiredCapability : decision.incident.requiredCapability;
-        setTriage(db, decision.incident.id, priority, capability);
-        appendIncidentEvent(db, {
+        await setTriage(t, decision.incident.id, priority, capability);
+        await appendIncidentEvent(t, {
           incidentId: decision.incident.id, eventType: 'PRIORITY_SET', actorType: 'SYSTEM', createdAt: now,
           metadata: { priority, requiredCapability: capability, ruleId: triageResult.ruleId, escalatedByReportId: report.id },
         });
       }
       if (request.patientCount > decision.incident.patientCount) {
-        updateOperationalFields(db, decision.incident.id, { patientCount: request.patientCount });
+        await updateOperationalFields(t, decision.incident.id, { patientCount: request.patientCount });
       }
       emittedTopic = 'incident:merged';
       return {
-        incident: requireIncident(db, decision.incident.id), report,
+        incident: await requireIncident(t, decision.incident.id), report,
         wasMerged: true, mergedIntoIncidentId: decision.incident.id,
       };
     }
@@ -161,18 +159,18 @@ export function createIncidentFromReport(
       patientCount: request.patientCount, requiredCapability: null, zoneId: null,
       primaryReportId: null, mergedIntoIncidentId: null, createdAt: now, closedAt: null,
     };
-    insertIncident(db, {
+    await insertIncident(t, {
       id: incident.id, code: incident.code, status: incident.status, type: incident.type,
       lat: incident.lat, lng: incident.lng, patientCount: incident.patientCount, createdAt: now,
     });
-    appendIncidentEvent(db, {
+    await appendIncidentEvent(t, {
       incidentId, eventType: 'INCIDENT_CREATED', actorType, actorId: options.actorId,
       metadata: decision.kind === 'SUGGEST'
         ? { possibleDuplicateIncidentId: decision.incident.id, confidence: decision.confidence, reason: decision.reason }
         : {},
       createdAt: now,
     });
-    incident = transitionIncident(db, incident, 'VALIDATING');
+    incident = await transitionIncident(t, incident, 'VALIDATING');
 
     const report = {
       id: newId(now), incidentId, source: request.source,
@@ -184,41 +182,40 @@ export function createIncidentFromReport(
       mergeReason: decision.kind === 'SUGGEST' ? decision.reason : null,
       createdAt: now,
     };
-    insertReport(db, report, options.idempotencyKey ?? undefined);
-    setPrimaryReport(db, incidentId, report.id);
-    appendIncidentEvent(db, {
+    await insertReport(t, report, options.idempotencyKey ?? undefined);
+    await setPrimaryReport(t, incidentId, report.id);
+    await appendIncidentEvent(t, {
       incidentId, eventType: 'REPORT_ADDED', actorType, actorId: options.actorId,
       metadata: { reportId: report.id }, createdAt: now,
     });
-    setTriage(db, incidentId, triageResult.priority, triageResult.requiredCapability);
-    appendIncidentEvent(db, {
+    await setTriage(t, incidentId, triageResult.priority, triageResult.requiredCapability);
+    await appendIncidentEvent(t, {
       incidentId, eventType: 'PRIORITY_SET', actorType: 'SYSTEM', createdAt: now,
       metadata: { priority: triageResult.priority, requiredCapability: triageResult.requiredCapability, ruleId: triageResult.ruleId },
     });
-    incident = transitionIncident(db, incident, 'OPEN');
+    incident = await transitionIncident(t, incident, 'OPEN');
     emittedTopic = 'incident:created';
     return {
-      incident: requireIncident(db, incidentId), report,
+      incident: await requireIncident(t, incidentId), report,
       wasMerged: false, mergedIntoIncidentId: null,
     };
-  }).immediate();
+  });
 
   if (emittedTopic) bus.emit(emittedTopic, result.incident);
   return result;
 }
 
-export function appendReportToIncident(
+export async function appendReportToIncident(
   incidentId: string,
   request: CreateIncidentRequest,
   options: IncidentEngineOptions = {},
-): CreateIncidentResponse {
-  const db = options.db ?? getDatabase();
+): Promise<CreateIncidentResponse> {
   const now = options.now ?? Date.now();
   let changed = false;
-  const result = db.transaction(() => {
-    const previous = idempotentResult(db, options.idempotencyKey);
+  const result = await tx(async (t) => {
+    const previous = await idempotentResult(t, options.idempotencyKey);
     if (previous) return previous;
-    const incident = requireIncident(db, incidentId);
+    const incident = await requireIncident(t, incidentId);
     if (['COMPLETED', 'CANCELLED', 'DUPLICATE'].includes(incident.status)) {
       throw new HttpError(409, 'INVALID_TRANSITION', 'No se pueden agregar reportes a un incidente cerrado');
     }
@@ -229,82 +226,80 @@ export function appendReportToIncident(
       wasMerged: true, mergeConfidence: 1,
       mergeReason: 'Reporte asociado explícitamente al incidente por el operador', createdAt: now,
     };
-    insertReport(db, report, options.idempotencyKey ?? undefined);
-    appendIncidentEvent(db, {
+    await insertReport(t, report, options.idempotencyKey ?? undefined);
+    await appendIncidentEvent(t, {
       incidentId, eventType: 'REPORT_MERGED', actorType: options.actorType ?? 'DISPATCHER',
       actorId: options.actorId, metadata: { reportId: report.id, confidence: 1, reason: report.mergeReason }, createdAt: now,
     });
     changed = true;
     return { incident, report, wasMerged: true, mergedIntoIncidentId: incidentId };
-  }).immediate();
+  });
   if (changed) bus.emit('incident:merged', result.incident);
   return result;
 }
 
-export function getIncidentDetail(incidentId: string, db: SqliteDatabase = getDatabase()): IncidentDetailResponse {
-  const incident = requireIncident(db, incidentId);
+export async function getIncidentDetail(incidentId: string, q: Queryable = db()): Promise<IncidentDetailResponse> {
+  const incident = await requireIncident(q, incidentId);
   return {
     incident,
-    reports: listReports(db, incidentId),
-    events: listEvents(db, incidentId),
-    ...readAssignmentContext(db, incidentId),
+    reports: await listReports(q, incidentId),
+    events: await listEvents(q, incidentId),
+    ...await readAssignmentContext(q, incidentId),
   };
 }
 
-export function listLiveIncidents(db: SqliteDatabase = getDatabase()): Incident[] {
-  return listLive(db);
+export function listLiveIncidents(q: Queryable = db()): Promise<Incident[]> {
+  return listLive(q);
 }
 
-export function updateIncident(
+export async function updateIncident(
   incidentId: string,
   request: UpdateIncidentRequest,
   options: IncidentEngineOptions = {},
-): Incident {
+): Promise<Incident> {
   if ('status' in request) {
     throw new HttpError(400, 'VALIDATION_FAILED', 'Los clientes envían acciones, no status');
   }
-  if (request.cancel) return cancelIncident(incidentId, request.cancel.reason, options);
-  const db = options.db ?? getDatabase();
+  if (request.cancel) return await cancelIncident(incidentId, request.cancel.reason, options);
   const now = options.now ?? Date.now();
-  const updated = db.transaction(() => {
-    requireIncident(db, incidentId);
-    updateOperationalFields(db, incidentId, request);
+  const updated = await tx(async (t) => {
+    await requireIncident(t, incidentId);
+    await updateOperationalFields(t, incidentId, request);
     if (request.priority || request.requiredCapability) {
-      appendIncidentEvent(db, {
+      await appendIncidentEvent(t, {
         incidentId, eventType: 'MANUAL_OVERRIDE', actorType: options.actorType ?? 'DISPATCHER',
         actorId: options.actorId, createdAt: now,
         metadata: { priority: request.priority, requiredCapability: request.requiredCapability },
       });
     }
-    return requireIncident(db, incidentId);
-  }).immediate();
+    return requireIncident(t, incidentId);
+  });
   bus.emit('incident:updated', updated);
   return updated;
 }
 
-export function cancelIncident(
+export async function cancelIncident(
   incidentId: string,
   reason: string,
   options: IncidentEngineOptions = {},
-): Incident {
-  const db = options.db ?? getDatabase();
+): Promise<Incident> {
   const now = options.now ?? Date.now();
-  const cancelled = db.transaction(() => {
-    const current = requireIncident(db, incidentId);
-    const next = transitionIncident(db, current, 'CANCELLED', now);
-    appendIncidentEvent(db, {
+  const cancelled = await tx(async (t) => {
+    const current = await requireIncident(t, incidentId);
+    const next = await transitionIncident(t, current, 'CANCELLED', now);
+    await appendIncidentEvent(t, {
       incidentId, eventType: 'INCIDENT_CANCELLED', actorType: options.actorType ?? 'DISPATCHER',
       actorId: options.actorId, metadata: { reason }, createdAt: now,
     });
     return next;
-  }).immediate();
+  });
   bus.emit('incident:updated', cancelled);
   return cancelled;
 }
 
-export function appendEvent(input: AppendEventInput, db: SqliteDatabase = getDatabase()): IncidentEvent {
-  requireIncident(db, input.incidentId);
-  return appendIncidentEvent(db, input);
+export async function appendEvent(input: AppendEventInput, q: Queryable = db()): Promise<IncidentEvent> {
+  await requireIncident(q, input.incidentId);
+  return appendIncidentEvent(q, input);
 }
 
 export { areIncidentTypesCompatible, decideDeduplication } from './internal/dedup';

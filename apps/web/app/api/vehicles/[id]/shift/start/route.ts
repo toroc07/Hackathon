@@ -7,7 +7,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const { id } = await context.params;
     const raw = await request.text();
     const body = zStartShiftRequest.parse(raw ? JSON.parse(raw) : {});
-    return Response.json(startShift(id, body.crewUserIds), { status: 201 });
+    return Response.json(await startShift(id, body.crewUserIds), { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);
   }

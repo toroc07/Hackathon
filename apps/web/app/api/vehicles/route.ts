@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<Response> {
   try {
-    return Response.json(listVehicles());
+    return Response.json(await listVehicles());
   } catch (error) {
     return apiErrorResponse(error);
   }

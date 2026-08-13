@@ -1,5 +1,5 @@
 import type { ActorType, IncidentEvent, IncidentEventType } from '@dispatch/contracts';
-import { newId, type SqliteDatabase } from '@/src/server/infra/db';
+import { newId, type Queryable } from '@/src/server/infra/db';
 
 export interface AppendEventInput {
   incidentId: string;
@@ -10,7 +10,7 @@ export interface AppendEventInput {
   createdAt?: number;
 }
 
-export function appendIncidentEvent(db: SqliteDatabase, input: AppendEventInput): IncidentEvent {
+export async function appendIncidentEvent(q: Queryable, input: AppendEventInput): Promise<IncidentEvent> {
   const event: IncidentEvent = {
     id: newId(input.createdAt),
     incidentId: input.incidentId,
@@ -20,9 +20,9 @@ export function appendIncidentEvent(db: SqliteDatabase, input: AppendEventInput)
     metadata: input.metadata ?? {},
     createdAt: input.createdAt ?? Date.now(),
   };
-  db.prepare(`
+  await q.run(`
     INSERT INTO incident_events (id, incident_id, event_type, actor_type, actor_id, metadata, created_at)
-    VALUES (@id, @incidentId, @eventType, @actorType, @actorId, @metadata, @createdAt)
-  `).run({ ...event, metadata: JSON.stringify(event.metadata) });
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, [event.id, event.incidentId, event.eventType, event.actorType, event.actorId, JSON.stringify(event.metadata), event.createdAt]);
   return event;
 }

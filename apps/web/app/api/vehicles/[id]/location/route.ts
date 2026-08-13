@@ -6,7 +6,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     const body = zPostLocationRequest.parse(await request.json());
-    const positions = recordLocations(id, body.positions);
+    const positions = await recordLocations(id, body.positions);
     return Response.json({ positions, accepted: positions.length }, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);

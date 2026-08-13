@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(): Promise<Response> {
   try {
-    return Response.json(listLiveIncidents());
+    return Response.json(await listLiveIncidents());
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -16,7 +16,7 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const input = zCreateIncidentRequest.parse(await readJson(request));
-    const result = createIncidentFromReport(input, { idempotencyKey: readIdempotencyKey(request) });
+    const result = await createIncidentFromReport(input, { idempotencyKey: readIdempotencyKey(request) });
     return Response.json(zCreateIncidentResponse.parse(result), { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);

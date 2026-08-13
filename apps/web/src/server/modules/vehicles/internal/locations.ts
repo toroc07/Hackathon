@@ -1,5 +1,5 @@
 import type { VehicleLocation } from '@dispatch/contracts';
-import { getDatabase, newId, type SqliteDatabase } from '@/src/server/infra/db';
+import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
 import { HttpError } from '@/src/server/infra/errors';
 import { bus } from '@/src/server/infra/bus';
 import { findVehicle, vehicleExists } from './repository';
@@ -12,30 +12,16 @@ export interface LocationPosition {
   recordedAt: number;
 }
 
-export function recordLocations(
+export async function recordLocations(
   vehicleId: string,
   positions: readonly LocationPosition[],
-  db: SqliteDatabase = getDatabase(),
-): VehicleLocation[] {
-  if (!vehicleExists(db, vehicleId)) {
+  q?: Queryable,
+): Promise<VehicleLocation[]> {
+  const connection = q ?? db();
+  if (!await vehicleExists(vehicleId, connection)) {
     throw new HttpError(404, 'NOT_FOUND', 'Vehículo no encontrado');
   }
 
-  const insertHistory = db.prepare(`
-    INSERT INTO vehicle_locations (id, vehicle_id, lat, lng, heading, speed_kmh, recorded_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const upsertCurrent = db.prepare(`
-    INSERT INTO vehicle_current_location (vehicle_id, lat, lng, heading, speed_kmh, recorded_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(vehicle_id) DO UPDATE SET
-      lat = excluded.lat,
-      lng = excluded.lng,
-      heading = excluded.heading,
-      speed_kmh = excluded.speed_kmh,
-      recorded_at = excluded.recorded_at
-    WHERE excluded.recorded_at >= vehicle_current_location.recorded_at
-  `);
   const recorded = positions.map((position) => ({
     vehicleId,
     lat: position.lat,
@@ -45,21 +31,34 @@ export function recordLocations(
     recordedAt: position.recordedAt,
   }));
 
-  db.transaction(() => {
+  const write = async (t: Queryable) => {
     for (const position of recorded) {
-      insertHistory.run(
+      await t.run(`INSERT INTO vehicle_locations
+        (id, vehicle_id, lat, lng, heading, speed_kmh, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`, [
         newId(), vehicleId, position.lat, position.lng, position.heading,
         position.speedKmh, position.recordedAt,
-      );
-      upsertCurrent.run(
+      ]);
+      await t.run(`INSERT INTO vehicle_current_location
+        (vehicle_id, lat, lng, heading, speed_kmh, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (vehicle_id) DO UPDATE SET
+          lat = EXCLUDED.lat,
+          lng = EXCLUDED.lng,
+          heading = EXCLUDED.heading,
+          speed_kmh = EXCLUDED.speed_kmh,
+          recorded_at = EXCLUDED.recorded_at
+        WHERE EXCLUDED.recorded_at >= vehicle_current_location.recorded_at`, [
         vehicleId, position.lat, position.lng, position.heading,
         position.speedKmh, position.recordedAt,
-      );
+      ]);
     }
-    db.prepare('UPDATE vehicles SET updated_at = ? WHERE id = ?').run(Date.now(), vehicleId);
-  })();
+    await t.run('UPDATE vehicles SET updated_at = ? WHERE id = ?', [Date.now(), vehicleId]);
+  };
+  if (q) await write(q);
+  else await tx(write);
 
-  const vehicle = findVehicle(db, vehicleId);
+  const vehicle = await findVehicle(vehicleId, connection);
   if (vehicle?.location) bus.emit('vehicle:location', vehicle.location);
   if (vehicle) bus.emit('vehicle:updated', vehicle);
   return recorded;

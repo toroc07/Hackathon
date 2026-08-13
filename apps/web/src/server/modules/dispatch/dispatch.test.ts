@@ -1,53 +1,72 @@
-import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { totalScore } from '@dispatch/contracts';
+import { db, dropAll, runMigrations, type Queryable } from '@dispatch/db';
 import { runDispatch, assignVehicle, expireStaleOffers } from './index';
 import { calculateCandidates } from './internal/candidates';
 import { scoreCandidate } from './internal/scoring';
-import type { DispatchDataAccess } from './internal/data';
 import type { IncidentRow, VehicleRow, ZoneRow } from './internal/types';
 
-function database(): { raw: Database.Database; db: DispatchDataAccess } {
-  const raw = new Database(':memory:');
-  for (const name of ['001_init.sql', '002_constraints.sql', '040_dispatch_candidate_explanation.sql']) {
-    raw.exec(readFileSync(new URL(`../../../../../../packages/db/migrations/${name}`, import.meta.url), 'utf8'));
-  }
-  raw.prepare(`INSERT INTO organizations (id, name, type, created_at) VALUES ('org', 'EMS', 'EMS', 0)`).run();
-  return { raw, db: raw as unknown as DispatchDataAccess };
+async function resetDatabase(): Promise<Queryable> {
+  await dropAll();
+  await runMigrations();
+  const q = db();
+  await q.run(`INSERT INTO organizations (id, name, type, created_at) VALUES (?, ?, ?, ?)`, [
+    'org', 'EMS', 'EMS', 0,
+  ]);
+  return q;
 }
 
-function addZone(raw: Database.Database, id: string, name: string, target = 1, weight = 1): void {
-  raw.prepare(`INSERT INTO zones (id, name, polygon, center_lat, center_lng, target_coverage_units, population_weight)
-    VALUES (?, ?, '[]', 10.4, -75.5, ?, ?)`).run(id, name, target, weight);
+async function addZone(q: Queryable, id: string, name: string, target = 1, weight = 1): Promise<void> {
+  await q.run(`INSERT INTO zones
+    (id, name, polygon, center_lat, center_lng, target_coverage_units, population_weight)
+    VALUES (?, ?, '[]', 10.4, -75.5, ?, ?)`, [id, name, target, weight]);
 }
 
-function addIncident(raw: Database.Database, id: string, lat: number, lng: number, zone: string, required = 'ALS'): void {
-  raw.prepare(`INSERT INTO incidents (id, code, status, type, lat, lng, required_capability, zone_id, created_at)
-    VALUES (?, ?, 'OPEN', 'TRAFFIC_ACCIDENT', ?, ?, ?, ?, 0)`).run(id, `INC-${id}`, lat, lng, required, zone);
+async function addIncident(
+  q: Queryable,
+  id: string,
+  lat: number,
+  lng: number,
+  zone: string,
+  required = 'ALS',
+): Promise<void> {
+  await q.run(`INSERT INTO incidents
+    (id, code, status, type, lat, lng, required_capability, zone_id, created_at)
+    VALUES (?, ?, 'OPEN', 'TRAFFIC_ACCIDENT', ?, ?, ?, ?, 0)`, [
+    id, `INC-${id}`, lat, lng, required, zone,
+  ]);
 }
 
-function addVehicle(raw: Database.Database, input: { id: string; callsign: string; level?: string; zone: string; lat: number; lng: number; recordedAt: number }): void {
-  raw.prepare(`INSERT INTO vehicles
+async function addVehicle(q: Queryable, input: {
+  id: string; callsign: string; level?: string; zone: string;
+  lat: number; lng: number; recordedAt: number;
+}): Promise<void> {
+  await q.run(`INSERT INTO vehicles
     (id, org_id, callsign, status, capability_level, capabilities, operating_zone_id, is_simulated, updated_at)
-    VALUES (?, 'org', ?, 'AVAILABLE', ?, '[]', ?, 1, ?)`)
-    .run(input.id, input.callsign, input.level ?? 'ALS', input.zone, input.recordedAt);
-  raw.prepare(`INSERT INTO vehicle_current_location (vehicle_id, lat, lng, recorded_at) VALUES (?, ?, ?, ?)`)
-    .run(input.id, input.lat, input.lng, input.recordedAt);
+    VALUES (?, 'org', ?, 'AVAILABLE', ?, '[]', ?, ?, ?)`, [
+    input.id, input.callsign, input.level ?? 'ALS', input.zone, true, input.recordedAt,
+  ]);
+  await q.run(`INSERT INTO vehicle_current_location (vehicle_id, lat, lng, recorded_at)
+    VALUES (?, ?, ?, ?)`, [input.id, input.lat, input.lng, input.recordedAt]);
 }
 
 describe('dispatch engine', () => {
-  it('permite exactamente un ganador entre 50 intentos por el mismo vehículo', async () => {
-    const { raw, db } = database();
-    addZone(raw, 'z', 'Centro');
-    addIncident(raw, 'i', 10.4, -75.5, 'z');
-    addVehicle(raw, { id: 'v', callsign: 'A17', zone: 'z', lat: 10.4, lng: -75.5, recordedAt: 1_000 });
+  let q: Queryable;
 
-    const attempts = await Promise.allSettled(Array.from({ length: 50 }, (_, index) => Promise.resolve().then(() =>
-      assignVehicle({ incidentId: 'i', vehicleId: 'v', idempotencyKey: `attempt-${index}`, now: 1_000 + index, database: db }))));
+  beforeEach(async () => {
+    q = await resetDatabase();
+  });
+
+  it('permite exactamente un ganador entre 50 intentos por el mismo vehículo', async () => {
+    await addZone(q, 'z', 'Centro');
+    await addIncident(q, 'i', 10.4, -75.5, 'z');
+    await addVehicle(q, { id: 'v', callsign: 'A17', zone: 'z', lat: 10.4, lng: -75.5, recordedAt: 1_000 });
+
+    const attempts = await Promise.allSettled(Array.from({ length: 50 }, (_, index) =>
+      assignVehicle({ incidentId: 'i', vehicleId: 'v', idempotencyKey: `attempt-${index}`, now: 1_000 + index })));
     expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(attempts.filter((result) => result.status === 'rejected')).toHaveLength(49);
-    expect(raw.prepare(`SELECT COUNT(*) AS count FROM assignments`).get()).toEqual({ count: 1 });
+    expect(await q.one(`SELECT COUNT(*)::INTEGER AS count FROM assignments`)).toEqual({ count: 1 });
   });
 
   it('mantiene la propiedad total_score = suma de los seis términos', () => {
@@ -66,20 +85,19 @@ describe('dispatch engine', () => {
     }
   });
 
-  it('escenario B: después de reservar A17 en Bocagrande, Crespo elige otra unidad y lo explica', () => {
-    const { raw, db } = database();
-    addZone(raw, 'boca', 'Bocagrande', 1);
-    addZone(raw, 'crespo', 'Crespo', 1);
-    addZone(raw, 'centro', 'Centro', 1);
-    addIncident(raw, 'boca-1', 10.4006, -75.556, 'boca');
-    addIncident(raw, 'crespo-2', 10.445, -75.513, 'crespo');
-    addVehicle(raw, { id: 'a17', callsign: 'A17', zone: 'boca', lat: 10.4007, lng: -75.556, recordedAt: 1_000_000 });
-    addVehicle(raw, { id: 'a12', callsign: 'A12', zone: 'centro', lat: 10.438, lng: -75.52, recordedAt: 1_000_000 });
-    addVehicle(raw, { id: 'a16', callsign: 'A16', zone: 'crespo', lat: 10.445, lng: -75.513, recordedAt: 1_000_000 });
+  it('escenario B: después de reservar A17 en Bocagrande, Crespo elige otra unidad y lo explica', async () => {
+    await addZone(q, 'boca', 'Bocagrande', 1);
+    await addZone(q, 'crespo', 'Crespo', 1);
+    await addZone(q, 'centro', 'Centro', 1);
+    await addIncident(q, 'boca-1', 10.4006, -75.556, 'boca');
+    await addIncident(q, 'crespo-2', 10.445, -75.513, 'crespo');
+    await addVehicle(q, { id: 'a17', callsign: 'A17', zone: 'boca', lat: 10.4007, lng: -75.556, recordedAt: 1_000_000 });
+    await addVehicle(q, { id: 'a12', callsign: 'A12', zone: 'centro', lat: 10.438, lng: -75.52, recordedAt: 1_000_000 });
+    await addVehicle(q, { id: 'a16', callsign: 'A16', zone: 'crespo', lat: 10.445, lng: -75.513, recordedAt: 1_000_000 });
 
-    const first = runDispatch('boca-1', { mode: 'AUTO_ASSIGN' }, { database: db, now: 1_000_000 });
+    const first = await runDispatch('boca-1', { mode: 'AUTO_ASSIGN' }, { now: 1_000_000 });
     expect(first.assignment?.vehicleId).toBe('a17');
-    const second = runDispatch('crespo-2', { mode: 'AUTO_ASSIGN' }, { database: db, now: 1_030_000 });
+    const second = await runDispatch('crespo-2', { mode: 'AUTO_ASSIGN' }, { now: 1_030_000 });
     expect(second.assignment?.vehicleId).not.toBe('a17');
     expect(second.excluded.find((candidate) => candidate.vehicleId === 'a17')?.explanation).toContain('oferta activa');
     expect(second.candidates[0]?.explanation).toMatch(/ETA .* = /);
@@ -96,20 +114,19 @@ describe('dispatch engine', () => {
     expect(result.excluded.map((candidate) => candidate.excludedReason)).toEqual(['INSUFFICIENT_CAPABILITY', 'LOCATION_TOO_STALE']);
   });
 
-  it('expira la oferta, libera el recurso y re-despacha excluyendo al que no respondió', () => {
-    const { raw, db } = database();
-    addZone(raw, 'z', 'Centro', 1);
-    addIncident(raw, 'i', 10.4, -75.5, 'z');
-    addVehicle(raw, { id: 'v1', callsign: 'A01', zone: 'z', lat: 10.4, lng: -75.5, recordedAt: 1_000 });
-    addVehicle(raw, { id: 'v2', callsign: 'A02', zone: 'z', lat: 10.401, lng: -75.501, recordedAt: 1_000 });
-    const initial = runDispatch('i', { mode: 'AUTO_ASSIGN' }, { database: db, now: 1_000 });
+  it('expira la oferta, libera el recurso y re-despacha excluyendo al que no respondió', async () => {
+    await addZone(q, 'z', 'Centro', 1);
+    await addIncident(q, 'i', 10.4, -75.5, 'z');
+    await addVehicle(q, { id: 'v1', callsign: 'A01', zone: 'z', lat: 10.4, lng: -75.5, recordedAt: 1_000 });
+    await addVehicle(q, { id: 'v2', callsign: 'A02', zone: 'z', lat: 10.401, lng: -75.501, recordedAt: 1_000 });
+    const initial = await runDispatch('i', { mode: 'AUTO_ASSIGN' }, { now: 1_000 });
     expect(initial.assignment?.vehicleId).toBe('v1');
 
-    const swept = expireStaleOffers({ database: db, now: 31_001 });
+    const swept = await expireStaleOffers({ now: 31_001 });
     expect(swept).toHaveLength(1);
     expect(swept[0]?.assignment.status).toBe('EXPIRED');
     expect(swept[0]?.dispatch.assignment?.vehicleId).toBe('v2');
-    expect(raw.prepare(`SELECT status FROM incidents WHERE id = 'i'`).get()).toEqual({ status: 'ASSIGNING' });
-    expect(raw.prepare(`SELECT status FROM vehicles WHERE id = 'v1'`).get()).toEqual({ status: 'AVAILABLE' });
+    expect(await q.one(`SELECT status FROM incidents WHERE id = ?`, ['i'])).toEqual({ status: 'ASSIGNING' });
+    expect(await q.one(`SELECT status FROM vehicles WHERE id = ?`, ['v1'])).toEqual({ status: 'AVAILABLE' });
   });
 });

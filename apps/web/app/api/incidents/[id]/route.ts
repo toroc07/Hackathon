@@ -9,7 +9,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: Context): Promise<Response> {
   try {
     const { id } = await context.params;
-    return Response.json(zIncidentDetailResponse.parse(getIncidentDetail(id)));
+    return Response.json(zIncidentDetailResponse.parse(await getIncidentDetail(id)));
   } catch (error) {
     return apiErrorResponse(error);
   }
@@ -23,7 +23,7 @@ export async function PATCH(request: Request, context: Context): Promise<Respons
     }
     const input = zUpdateIncidentRequest.parse(raw);
     const { id } = await context.params;
-    return Response.json(zIncident.parse(updateIncident(id, input)));
+    return Response.json(zIncident.parse(await updateIncident(id, input)));
   } catch (error) {
     return apiErrorResponse(error);
   }

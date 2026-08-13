@@ -8,11 +8,11 @@ import {
   type VehicleStatus,
   type VehicleWithLocation,
 } from '@dispatch/contracts';
-import type { SqliteDatabase } from '@/src/server/infra/db';
+import { db, type Queryable } from '@/src/server/infra/db';
 
 type Row = Record<string, unknown>;
 
-const bool = (value: unknown) => value === 1;
+const bool = (value: unknown) => value === true;
 
 const VEHICLE_SELECT = `
   SELECT v.*, l.lat AS location_lat, l.lng AS location_lng,
@@ -45,23 +45,23 @@ export function mapVehicle(row: Row, now = Date.now()): VehicleWithLocation {
       speedKmh: row.location_speed_kmh,
       recordedAt,
     },
-    isStale: recordedAt == null || now - Number(recordedAt) > 60_000,
+    isStale: recordedAt == null || now - (recordedAt as number) > 60_000,
   });
 }
 
-export function findVehicle(db: SqliteDatabase, vehicleId: string): VehicleWithLocation | null {
-  const row = db.prepare(`${VEHICLE_SELECT} WHERE v.id = ?`).get(vehicleId) as Row | undefined;
+export async function findVehicle(vehicleId: string, q: Queryable = db()): Promise<VehicleWithLocation | null> {
+  const row = await q.one<Row>(`${VEHICLE_SELECT} WHERE v.id = ?`, [vehicleId]);
   return row ? mapVehicle(row) : null;
 }
 
-export function findVehicles(db: SqliteDatabase, status?: VehicleStatus): VehicleWithLocation[] {
+export async function findVehicles(status?: VehicleStatus, q: Queryable = db()): Promise<VehicleWithLocation[]> {
   const where = status ? 'WHERE v.status = ?' : '';
-  const rows = db.prepare(`${VEHICLE_SELECT} ${where} ORDER BY v.callsign`).all(...(status ? [status] : [])) as Row[];
+  const rows = await q.many<Row>(`${VEHICLE_SELECT} ${where} ORDER BY v.callsign`, status ? [status] : []);
   return rows.map((row) => mapVehicle(row));
 }
 
-export function findAvailableVehicles(db: SqliteDatabase): VehicleWithLocation[] {
-  const rows = db.prepare(`${VEHICLE_SELECT}
+export async function findAvailableVehicles(q: Queryable = db()): Promise<VehicleWithLocation[]> {
+  const rows = await q.many<Row>(`${VEHICLE_SELECT}
     WHERE v.status = 'AVAILABLE' AND v.active_shift_id IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM assignments a
@@ -69,24 +69,23 @@ export function findAvailableVehicles(db: SqliteDatabase): VehicleWithLocation[]
           AND a.status IN (${ACTIVE_ASSIGNMENT_STATUSES.map(() => '?').join(',')})
       )
     ORDER BY v.callsign
-  `).all(...ACTIVE_ASSIGNMENT_STATUSES) as Row[];
+  `, [...ACTIVE_ASSIGNMENT_STATUSES]);
   return rows.map((row) => mapVehicle(row));
 }
 
-export function setVehicleState(
-  db: SqliteDatabase,
+export async function setVehicleState(
   vehicleId: string,
   status: VehicleStatus,
   updatedAt: number,
   activeShiftId?: string | null,
-): void {
+  q: Queryable = db(),
+): Promise<void> {
   if (activeShiftId === undefined) {
-    db.prepare('UPDATE vehicles SET status = ?, updated_at = ? WHERE id = ?')
-      .run(status, updatedAt, vehicleId);
+    await q.run('UPDATE vehicles SET status = ?, updated_at = ? WHERE id = ?', [status, updatedAt, vehicleId]);
     return;
   }
-  db.prepare('UPDATE vehicles SET status = ?, active_shift_id = ?, updated_at = ? WHERE id = ?')
-    .run(status, activeShiftId, updatedAt, vehicleId);
+  await q.run('UPDATE vehicles SET status = ?, active_shift_id = ?, updated_at = ? WHERE id = ?',
+    [status, activeShiftId, updatedAt, vehicleId]);
 }
 
 export interface ActiveAssignmentContext {
@@ -94,8 +93,11 @@ export interface ActiveAssignmentContext {
   incident: Incident;
 }
 
-export function findActiveAssignment(db: SqliteDatabase, vehicleId: string): ActiveAssignmentContext | null {
-  const row = db.prepare(`
+export async function findActiveAssignment(
+  vehicleId: string,
+  q: Queryable = db(),
+): Promise<ActiveAssignmentContext | null> {
+  const row = await q.one<Row>(`
     SELECT
       a.id AS assignment_id, a.incident_id, a.vehicle_id, a.dispatch_run_id,
       a.status AS assignment_status, a.offered_at, a.expires_at, a.responded_at,
@@ -109,7 +111,7 @@ export function findActiveAssignment(db: SqliteDatabase, vehicleId: string): Act
     JOIN incidents i ON i.id = a.incident_id
     WHERE a.vehicle_id = ? AND a.status IN (${ACTIVE_ASSIGNMENT_STATUSES.map(() => '?').join(',')})
     ORDER BY a.offered_at DESC LIMIT 1
-  `).get(vehicleId, ...ACTIVE_ASSIGNMENT_STATUSES) as Row | undefined;
+  `, [vehicleId, ...ACTIVE_ASSIGNMENT_STATUSES]);
   if (!row) return null;
   return {
     assignment: zAssignment.parse({
@@ -134,6 +136,6 @@ export function findActiveAssignment(db: SqliteDatabase, vehicleId: string): Act
   };
 }
 
-export function vehicleExists(db: SqliteDatabase, vehicleId: string): boolean {
-  return db.prepare('SELECT 1 FROM vehicles WHERE id = ?').get(vehicleId) !== undefined;
+export async function vehicleExists(vehicleId: string, q: Queryable = db()): Promise<boolean> {
+  return (await q.one('SELECT 1 FROM vehicles WHERE id = ?', [vehicleId])) !== undefined;
 }

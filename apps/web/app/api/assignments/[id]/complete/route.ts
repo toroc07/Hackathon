@@ -6,6 +6,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     zCompleteAssignmentRequest.parse(await optionalJson(request));
     const { id } = await context.params;
-    return Response.json(zAssignment.parse(completeAssignment(id)));
+    return Response.json(zAssignment.parse(await completeAssignment(id)));
   } catch (error) { return dispatchApiError(error); }
 }

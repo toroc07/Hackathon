@@ -17,11 +17,11 @@ export const startTransport = (
   options?: DispatchOptions,
 ) => transport(id, typeof destination === 'string' ? destination : destination.destinationFacilityId, options);
 export const completeAssignment = complete;
-export function expireStaleOffers(options: DispatchOptions = {}) {
-  const expired = expireOffers(options);
-  return expired.map((assignment) => ({
+export async function expireStaleOffers(options: DispatchOptions = {}) {
+  const expired = await expireOffers(options);
+  return Promise.all(expired.map(async (assignment) => ({
     assignment,
-    dispatch: executeDispatch(assignment.incidentId, { mode: 'AUTO_ASSIGN', excludeVehicleIds: [assignment.vehicleId] }, { ...options, triggeredBy: 'TIMEOUT' }),
-  }));
+    dispatch: await executeDispatch(assignment.incidentId, { mode: 'AUTO_ASSIGN', excludeVehicleIds: [assignment.vehicleId] }, { ...options, triggeredBy: 'TIMEOUT' }),
+  })));
 }
 export const getCandidates = getPersistedCandidates;

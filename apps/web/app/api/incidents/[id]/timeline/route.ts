@@ -7,7 +7,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: Context): Promise<Response> {
   try {
     const { id } = await context.params;
-    return Response.json({ events: getIncidentDetail(id).events });
+    return Response.json({ events: (await getIncidentDetail(id)).events });
   } catch (error) {
     return apiErrorResponse(error);
   }
