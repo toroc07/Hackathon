@@ -119,9 +119,15 @@ export interface Queryable {
 
 function wrap(runner: Pool | PoolClient): Queryable {
   return {
-    async one<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
+    async one<T extends QueryResultRow = QueryResultRow>(
+      sql: string,
+      params: unknown[] = [],
+    ): Promise<T | undefined> {
       const result = await runner.query<T>(toPgPlaceholders(sql), params);
-      return result.rows[0];
+      // El paquete no activa noUncheckedIndexedAccess, asi que hay que declarar
+      // explicitamente que "sin filas" es un resultado valido: quien llama debe
+      // manejar el undefined en vez de asumir que siempre hay fila.
+      return result.rows.length > 0 ? result.rows[0]! : undefined;
     },
     async many<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
       const result = await runner.query<T>(toPgPlaceholders(sql), params);
