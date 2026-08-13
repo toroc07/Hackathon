@@ -58,6 +58,23 @@ export function TrackingMap({ tracking }: Props) {
 
     const incident = { lat: tracking.incidentLat, lng: tracking.incidentLng };
 
+    // Respeta la preferencia del sistema: con reduced-motion no interpolamos ni
+    // pulsamos, solo redibujamos cuando llegan datos nuevos. Quien activa esa
+    // opción suele hacerlo por mareo o migraña, y aquí ya está bajo estrés.
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+    // Los colores salen de los tokens de globals.css, no hardcodeados: si el
+    // tema cambia, el mapa cambia con él.
+    const styles = getComputedStyle(document.documentElement);
+    const token = (name: string, fallback: string) =>
+      styles.getPropertyValue(name).trim() || fallback;
+    const COLOR = {
+      bg: token('--surface-base', '#070b14'),
+      grid: token('--border-subtle', 'rgba(174,187,212,0.14)'),
+      vehicle: token('--emergency', '#ff4557'),
+      target: token('--info', '#4cc4ff'),
+    };
+
     const draw = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
