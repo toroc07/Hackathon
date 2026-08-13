@@ -1,5 +1,5 @@
 import { getActiveAssignmentForVehicle, getVehicle } from '@/src/server/modules/vehicles';
-import { getPrimaryReportContact } from '@/src/server/modules/incidents';
+import { getPrimaryReportSummary } from '@/src/server/modules/incidents';
 import { apiErrorResponse } from '@/src/server/infra/errors';
 
 export const dynamic = 'force-dynamic';
@@ -11,10 +11,12 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       getVehicle(id),
       getActiveAssignmentForVehicle(id),
     ]);
-    // Para el botón "Llamar al ciudadano" del responder — null si el reporte
-    // no dejó contacto, la UI simplemente no muestra el botón.
-    const reporterContact = activeAssignment ? await getPrimaryReportContact(activeAssignment.incident.id) : null;
-    return Response.json({ vehicle, activeAssignment, reporterContact });
+    // Reporte de la IA + contacto para llamar — null si no hay asignación o
+    // el reporte no trajo el dato; la UI simplemente no muestra esa parte.
+    const { description, reporterContact } = activeAssignment
+      ? await getPrimaryReportSummary(activeAssignment.incident.id)
+      : { description: null, reporterContact: null };
+    return Response.json({ vehicle, activeAssignment, reportSummary: description, reporterContact });
   } catch (error) {
     return apiErrorResponse(error);
   }

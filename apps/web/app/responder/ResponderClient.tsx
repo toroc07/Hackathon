@@ -1,10 +1,10 @@
 'use client';
 
 import {
-  MOCK_FACILITIES, REJECT_REASON,
-  type ApiError, type AssignmentStatus, type Incident, type RejectReason, type VehicleWithLocation,
+  MOCK_FACILITIES,
+  type ApiError, type Incident, type VehicleWithLocation,
 } from '@dispatch/contracts';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertIcon, AmbulanceIcon, CheckIcon, LocationIcon, PhoneIcon } from '@/src/components/ui/icons';
 import { Badge, Button } from '@/src/components/ui';
 import { useLiveVehicles } from '@/src/hooks/useLiveVehicles';
@@ -13,10 +13,6 @@ import { SlideToConfirm } from './SlideToConfirm';
 import { useVehicleTracking, type GpsState } from './useVehicleTracking';
 import { assignmentActionOutcome } from './responderState';
 
-const REASON_LABELS: Record<RejectReason, string> = {
-  MECHANICAL: 'Falla mecánica', CREW_UNAVAILABLE: 'Tripulación no disponible',
-  ALREADY_COMMITTED: 'Ya comprometida', UNSAFE_ACCESS: 'Acceso inseguro', OTHER: 'Otro motivo',
-};
 const GPS_LABELS: Record<GpsState, string> = {
   waiting: 'Buscando GPS', sending: 'GPS en vivo', offline: 'GPS sin conexión',
   denied: 'GPS sin permiso', unsupported: 'GPS no disponible',
@@ -48,27 +44,18 @@ export function ResponderClient() {
   const tracking = useVehicleTracking(selected.vehicleId, Boolean(vehicle?.activeShiftId));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState<RejectReason>('OTHER');
-  const [destinationId, setDestinationId] = useState(MOCK_FACILITIES.find((facility) => facility.type === 'HOSPITAL')?.id ?? 'f-bocagrande');
-  const [secondsLeft, setSecondsLeft] = useState(30);
   const [lostAssignmentId, setLostAssignmentId] = useState<string | null>(null);
   const acceptedRef = useRef<Set<string>>(new Set());
   const context = serverContext?.assignment.id === lostAssignmentId ? null : serverContext;
-  const destination = MOCK_FACILITIES.find((facility) => facility.id === destinationId) ?? null;
 
   useEffect(() => { if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/responder/sw.js', { scope: '/responder/' }); }, []);
   useEffect(() => { if (serverContext && serverContext.assignment.id !== lostAssignmentId) setLostAssignmentId(null); }, [lostAssignmentId, serverContext]);
-
-  const offer = context?.assignment.status === 'OFFERED' ? context.assignment : null;
+  // Vibra al llegar un reporte nuevo — la única señal de "algo pasó", sin
+  // countdown ni pantalla de aceptar/rechazar por separado (§34: el panel
+  // solo muestra el reporte, llamar, y notificar que va en camino).
   useEffect(() => {
-    if (!offer) return;
-    navigator.vibrate?.([500, 180, 500, 180, 900]);
-    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((offer.expiresAt - Date.now()) / 1_000)));
-    tick();
-    const timer = window.setInterval(tick, 250);
-    return () => window.clearInterval(timer);
-  }, [offer]);
-  useEffect(() => { if (offer && secondsLeft === 0) void live.refresh(); }, [live.refresh, offer, secondsLeft]);
+    if (context?.assignment.status === 'OFFERED') navigator.vibrate?.([500, 180, 500, 180, 900]);
+  }, [context?.assignment.id, context?.assignment.status]);
 
   const assignmentStatus = context?.assignment.status;
   const action = async (path: string, body?: unknown, idempotent = false) => {
@@ -97,13 +84,19 @@ export function ResponderClient() {
     finally { setBusy(false); }
   };
 
-  const statusLabel = useMemo(() => {
-    const labels: Partial<Record<AssignmentStatus, string>> = {
-      OFFERED: 'Nueva asignación', ACCEPTED: 'Asignación aceptada', EN_ROUTE: 'En ruta',
-      ON_SCENE: 'En el lugar', TRANSPORTING: 'Traslado en curso', COMPLETED: 'Servicio finalizado',
-    };
-    return lostAssignmentId ? 'Disponible' : assignmentStatus ? labels[assignmentStatus] ?? assignmentStatus : vehicle?.status === 'AVAILABLE' ? 'Disponible' : vehicle?.status ?? 'Cargando';
-  }, [assignmentStatus, lostAssignmentId, vehicle?.status]);
+  /** Un solo botón: acepta la oferta si hace falta y marca en camino. El
+   *  ciudadano lo ve reflejado en su seguimiento en vivo — esa pantalla ya
+   *  dice "ayuda en camino", así que llamarlo YA es la notificación (§34:
+   *  el panel no expone el flujo interno de aceptar/rechazar/trasladar). */
+  const notifyEnRoute = async () => {
+    if (!context || busy) return;
+    if (context.assignment.status === 'OFFERED') {
+      const accepted = await action('accept', {}, true);
+      if (!accepted) return;
+    }
+    await updateVehicle('status', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'EN_ROUTE' }) });
+  };
+  const notified = Boolean(assignmentStatus && assignmentStatus !== 'OFFERED' && assignmentStatus !== 'ACCEPTED');
 
   if (liveVehicles.error && liveVehicles.data.length === 0) {
     return (
@@ -130,49 +123,56 @@ export function ResponderClient() {
     );
   }
 
-  if (offer && context) {
-    return (
-      <main className="app-light responder-shell">
-        <ResponderHeader callsign={vehicle.callsign} gps={tracking.state} queued={tracking.queued} tone="red" onChange={selected.change} />
-        <div className="mt-4 flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-emergency">Nueva asignación</p><h1 className="text-2xl font-bold">Prioridad {context.incident.priority ?? 'por confirmar'}</h1></div><span className="tnum rounded-2xl bg-emergency px-4 py-2 text-2xl font-bold text-white" aria-label={`${secondsLeft} segundos para responder`}>{secondsLeft}s</span></div>
-        <section className="state-card mt-4 overflow-hidden">
-          <RouteMap vehicle={vehicle} incident={context.incident} />
-          <div className="p-5"><p className="text-xs font-bold uppercase tracking-[.14em] text-content-muted">{context.incident.code}</p><h2 className="mt-1 text-2xl font-bold">{incidentTypeLabel(context.incident.type)}</h2><p className="mt-3 flex items-start gap-2 text-content-secondary"><LocationIcon className="mt-0.5 shrink-0 text-emergency" size={19} />{context.incident.address ?? 'Ubicación GPS del incidente'}</p><p className="mt-3 text-sm font-semibold text-content-secondary">{context.incident.patientCount} paciente(s) confirmado(s)</p></div>
-        </section>
-        <Button className="responder-action mt-4 bg-emergency text-white" disabled={busy || secondsLeft === 0} onClick={() => void action('accept', {}, true)}>Aceptar asignación</Button>
-        <details className="mt-3 rounded-xl border border-edge-subtle bg-surface-raised p-3"><summary className="min-h-touch cursor-pointer py-3 font-semibold text-content-secondary">No puedo atender esta emergencia</summary><label className="mt-2 block text-sm font-semibold">Motivo<select className="mt-2 w-full rounded-xl border border-edge-strong bg-surface-base px-4 text-content" value={rejectReason} onChange={(event) => setRejectReason(event.target.value as RejectReason)}>{REJECT_REASON.map((reason) => <option key={reason} value={reason}>{REASON_LABELS[reason]}</option>)}</select></label><div className="mt-3"><SlideToConfirm disabled={busy} label={`Rechazar · ${REASON_LABELS[rejectReason]}`} onConfirm={() => void action('reject', { reason: rejectReason })} /></div></details>
-        {message && <p role="alert" className="responder-alert">{message}</p>}
-      </main>
-    );
-  }
-
   return (
     <main className="app-light responder-shell">
-      <ResponderHeader callsign={vehicle.callsign} gps={tracking.state} queued={tracking.queued} tone={assignmentStatus === 'ON_SCENE' ? 'purple' : assignmentStatus === 'TRANSPORTING' ? 'blue' : 'green'} onChange={selected.change} />
-      <div className="mt-4 flex items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-content-muted">Estado actual</p><h1 className="text-2xl font-bold">{statusLabel}</h1></div>{context && <Badge className="bg-surface-overlay px-3 py-2 text-content-secondary">{context.incident.code}</Badge>}</div>
+      <ResponderHeader callsign={vehicle.callsign} gps={tracking.state} queued={tracking.queued} tone={context ? (notified ? 'green' : 'red') : 'green'} onChange={selected.change} />
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[.16em] text-content-muted">{context ? 'Reporte recibido' : 'Estado actual'}</p>
+          <h1 className="text-2xl font-bold">{context ? incidentTypeLabel(context.incident.type) : 'Disponible'}</h1>
+        </div>
+        {context && <Badge className="bg-surface-overlay px-3 py-2 text-content-secondary">{context.incident.code}</Badge>}
+      </div>
 
       <section className="state-card mt-4 overflow-hidden">
-        <RouteMap vehicle={vehicle} incident={context?.incident ?? null} destination={assignmentStatus === 'TRANSPORTING' ? destination : null} />
+        <RouteMap vehicle={vehicle} incident={context?.incident ?? null} />
         <div className="p-4">
-          {context ? <><h2 className="text-xl font-bold">{assignmentStatus === 'TRANSPORTING' ? destination?.name ?? 'Centro asistencial' : context.incident.address ?? 'Ubicación del incidente'}</h2><p className="mt-1 text-sm text-content-secondary">{incidentTypeLabel(context.incident.type)} · {context.incident.patientCount} paciente(s)</p></> : <><h2 className="text-xl font-bold">Disponible para asignaciones</h2><p className="mt-1 text-sm text-content-secondary">Te avisaremos inmediatamente cuando llegue una emergencia.</p></>}
-          {context && live.data.reporterContact && (
-            <a
-              href={`tel:${live.data.reporterContact}`}
-              className="pressable mt-3 flex min-h-touch items-center justify-center gap-2 rounded-xl border border-edge-strong font-semibold text-info"
-            >
-              <PhoneIcon size={18} /> Llamar al ciudadano · {live.data.reporterContact}
-            </a>
+          {context ? (
+            <>
+              <p className="flex items-start gap-2 text-content-secondary"><LocationIcon className="mt-0.5 shrink-0 text-emergency" size={18} />{context.incident.address ?? 'Ubicación GPS del incidente'}</p>
+              <p className="mt-2 text-sm font-semibold text-content-secondary">{context.incident.patientCount} paciente(s)</p>
+              {/* El reporte que estructuró la IA (audio-intake.ts), tal cual — es lo único operativo que ve el responder. */}
+              {live.data.reportSummary && (
+                <p className="mt-3 rounded-xl bg-surface-overlay p-3 text-sm italic text-content-secondary">&ldquo;{live.data.reportSummary}&rdquo;</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-content-secondary">Te avisaremos apenas llegue un reporte para tu unidad.</p>
           )}
         </div>
       </section>
 
-      <div className="mt-auto pt-5">
-        {assignmentStatus === 'ACCEPTED' && <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void updateVehicle('status', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'EN_ROUTE' }) })}>Iniciar ruta</Button>}
-        {assignmentStatus === 'EN_ROUTE' && context && <><a role="button" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${context.incident.lat},${context.incident.lng}`} className="mb-3 flex w-full items-center justify-center rounded-xl border border-edge-strong font-semibold text-info">Abrir navegación</a><Button className="responder-action bg-warn text-slate-950" disabled={busy} onClick={() => void action('arrive')}>Llegué al sitio</Button></>}
-        {assignmentStatus === 'ON_SCENE' && <div><label className="block text-sm font-semibold text-content-secondary">Destino del traslado<select className="mt-2 w-full rounded-xl border border-edge-strong bg-surface-base px-4 text-content" value={destinationId} onChange={(event) => setDestinationId(event.target.value)}>{MOCK_FACILITIES.filter((facility) => facility.type !== 'BASE').map((facility) => <option key={facility.id} value={facility.id}>{facility.name}</option>)}</select></label><Button className="responder-action mt-3 bg-[#6634ad] text-white" disabled={busy} onClick={() => void action('transport', { destinationFacilityId: destinationId })}>Iniciar traslado</Button></div>}
-        {assignmentStatus === 'TRANSPORTING' && <><a role="button" target="_blank" rel="noreferrer" href={destination ? `https://www.google.com/maps/dir/?api=1&destination=${destination.lat},${destination.lng}` : '#'} className="mb-3 flex w-full items-center justify-center rounded-xl border border-edge-strong font-semibold text-info">Navegar al destino</a><SlideToConfirm disabled={busy} label="Paciente entregado · cerrar servicio" large onConfirm={() => void action('complete')} /></>}
-        {!context && <SlideToConfirm disabled={busy} label="Cerrar turno" large onConfirm={() => void updateVehicle('shift/end', { method: 'POST' })} />}
-      </div>
+      {context && (
+        <div className="mt-auto flex flex-col gap-3 pt-5">
+          {live.data.reporterContact && (
+            <a href={`tel:${live.data.reporterContact}`} className="pressable flex min-h-touch-lg items-center justify-center gap-2 rounded-xl border border-edge-strong font-semibold text-info">
+              <PhoneIcon size={20} /> Llamar al ciudadano
+            </a>
+          )}
+          {notified ? (
+            <p className="flex items-center justify-center gap-2 rounded-xl bg-ok-soft py-3 font-semibold text-ok"><CheckIcon size={18} /> Ya avisamos que vas en camino</p>
+          ) : (
+            <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void notifyEnRoute()}>Notificar: voy en camino</Button>
+          )}
+        </div>
+      )}
+
+      {!context && (
+        <div className="mt-auto pt-5">
+          <SlideToConfirm disabled={busy} label="Cerrar turno" large onConfirm={() => void updateVehicle('shift/end', { method: 'POST' })} />
+        </div>
+      )}
       {message && <p role="alert" className="responder-alert">{message}</p>}
     </main>
   );

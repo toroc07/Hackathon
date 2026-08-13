@@ -302,19 +302,22 @@ export async function appendEvent(input: AppendEventInput, q: Queryable = db()):
   return appendIncidentEvent(q, input);
 }
 
-/** Contacto de algún reporte del incidente (prioriza el primario) — para que
- *  el responder pueda llamar al ciudadano si el reporte no trajo suficiente
- *  información. Consulta liviana a propósito: el panel de la ambulancia la
- *  pide cada 1s mientras hay una asignación activa. */
-export async function getPrimaryReportContact(incidentId: string, q: Queryable = db()): Promise<string | null> {
-  const row = await q.one<{ reporter_contact: string | null }>(
-    `SELECT reporter_contact FROM incident_reports
-     WHERE incident_id = ? AND reporter_contact IS NOT NULL
+/** Resumen del reporte primario del incidente — lo que el panel de la
+ *  ambulancia muestra tal cual (la descripción ya la estructuró la IA en
+ *  audio-intake.ts) más el contacto para poder llamar. Consulta liviana a
+ *  propósito: el panel la pide cada 1s mientras hay una asignación activa. */
+export async function getPrimaryReportSummary(
+  incidentId: string,
+  q: Queryable = db(),
+): Promise<{ description: string | null; reporterContact: string | null }> {
+  const row = await q.one<{ description: string | null; reporter_contact: string | null }>(
+    `SELECT description, reporter_contact FROM incident_reports
+     WHERE incident_id = ? AND (description IS NOT NULL OR reporter_contact IS NOT NULL)
      ORDER BY (id = (SELECT primary_report_id FROM incidents WHERE id = ?)) DESC, created_at
      LIMIT 1`,
     [incidentId, incidentId],
   );
-  return row?.reporter_contact ?? null;
+  return { description: row?.description ?? null, reporterContact: row?.reporter_contact ?? null };
 }
 
 export { areIncidentTypesCompatible, decideDeduplication } from './internal/dedup';
