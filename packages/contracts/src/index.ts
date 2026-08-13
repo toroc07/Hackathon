@@ -16,4 +16,5 @@ export * from './dispatch.js';
 export * from './triage.js';
 export * from './models.js';
 export * from './api.js';
+export * from './audio.js';
 export * from './mocks.js';

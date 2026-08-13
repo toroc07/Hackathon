@@ -1,5 +1,6 @@
 import { MOCK_FACILITIES, MOCK_ZONES } from '@dispatch/contracts';
-import { tx, runMigrations, type Queryable } from '../src/index.js';
+import { tx, type Queryable } from '../src/client.js';
+import { runMigrations } from '../src/migrations.js';
 
 const VEHICLE_COUNT = 30;
 const LEVELS = ['BLS', 'BLS', 'ALS', 'MEDICAL_MOTO', 'RESCUE'] as const;

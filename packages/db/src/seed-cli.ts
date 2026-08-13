@@ -1,4 +1,4 @@
-import { closePool } from './index.js';
+import { closePool } from './client.js';
 import { seedDatabase } from '../seed/index.js';
 
 /** Entrypoint de `npm run db:seed`. Aplica migraciones y siembra la flota. */

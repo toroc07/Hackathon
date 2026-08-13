@@ -22,8 +22,9 @@ import {
   runDispatch, acceptAssignment, markEnRoute, markArrived,
   startTransport, completeAssignment,
 } from './modules/dispatch';
-import { db, closePool, runMigrations } from './infra/db';
-import { seedDatabase } from '../../../../packages/db/seed/index.js';
+import { db, closePool } from './infra/db';
+import { runMigrations } from '@dispatch/db/migrations';
+import { seedDatabase } from '@dispatch/db/seed';
 
 const BOCAGRANDE = { lat: 10.4006, lng: -75.5560 };
 const CRESPO = { lat: 10.4450, lng: -75.5130 };

@@ -20,5 +20,8 @@
  * transaccion y pierdes la atomicidad sin que nada falle visiblemente.
  */
 
-export { db, tx, newId, runMigrations, closePool } from '@dispatch/db';
+// `runMigrations` NO se re-exporta aquí: lee el directorio de migraciones con
+// readdirSync y al bundlearlo webpack falla el build. Los tests lo importan
+// directamente desde '@dispatch/db/migrations'.
+export { db, tx, newId, closePool } from '@dispatch/db';
 export type { Queryable } from '@dispatch/db';

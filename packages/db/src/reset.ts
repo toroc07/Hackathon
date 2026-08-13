@@ -1,4 +1,5 @@
-import { closePool, dropAll, runMigrations } from './index.js';
+import { closePool } from './client.js';
+import { dropAll, runMigrations } from './migrations.js';
 import { seedDatabase } from '../seed/index.js';
 
 /**

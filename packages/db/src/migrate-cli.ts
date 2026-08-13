@@ -1,4 +1,5 @@
-import { closePool, runMigrations } from './index.js';
+import { closePool } from './client.js';
+import { runMigrations } from './migrations.js';
 
 /**
  * Entrypoint de `npm run db:migrate`. NO destructivo: solo aplica lo pendiente.
