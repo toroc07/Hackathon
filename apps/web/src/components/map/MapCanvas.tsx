@@ -345,20 +345,25 @@ export function MapCanvas(props: MapCanvasProps) {
   }, [incidents, selectedIncidentId]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getSource('incidents')) return;
+    map.getSource('incidents')?.setData(incidentGeoJson(incidents));
+    map.getSource('coverage')?.setData(coverageGeoJson(zones, coverage));
+    map.getSource('assignment')?.setData(assignmentGeoJson(
+      incidents,
+      selectedIncidentId,
+      assignedVehicleId,
+      positionsRef.current,
+    ));
+  }, [incidents, coverage, zones, selectedIncidentId, assignedVehicleId, vehicles]);
+
+  useEffect(() => {
     let frame = 0;
     const tick = (now: number) => {
       const current = latestRef.current;
       const fleet = fleetGeoJson(positionsRef.current, now);
       const map = mapRef.current;
       map?.getSource('fleet')?.setData(fleet);
-      map?.getSource('incidents')?.setData(incidentGeoJson(current.incidents));
-      map?.getSource('coverage')?.setData(coverageGeoJson(current.zones, current.coverage));
-      map?.getSource('assignment')?.setData(assignmentGeoJson(
-        current.incidents,
-        current.selectedIncidentId,
-        current.assignedVehicleId,
-        positionsRef.current,
-      ));
       if (!map && canvasRef.current) drawFallback(
         canvasRef.current,
         fleet,

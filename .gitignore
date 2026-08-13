@@ -25,3 +25,6 @@ packages/db/data/
 # Logs / temporales
 *.log
 .DS_Store
+
+# Entorno del asistente — no versionar skills de Claude
+.claude/

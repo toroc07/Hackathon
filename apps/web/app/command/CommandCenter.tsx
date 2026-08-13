@@ -225,19 +225,19 @@ export function CommandCenter({ initialSnapshot, zones }: { initialSnapshot: Ope
   }, [incidents, selectedId]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedId) return;
     let active = true;
-    if (selected.id !== MOCK_DISPATCH_RESPONSE.incidentId) {
+    if (selectedId !== MOCK_DISPATCH_RESPONSE.incidentId) {
       setDispatch(null);
       setEvents([]);
     }
-    Promise.allSettled([fetchDispatchCandidates(selected.id), fetchIncidentEvents(selected.id)]).then(([candidatesResult, eventsResult]) => {
+    Promise.allSettled([fetchDispatchCandidates(selectedId), fetchIncidentEvents(selectedId)]).then(([candidatesResult, eventsResult]) => {
       if (!active) return;
       if (candidatesResult.status === 'fulfilled') setDispatch(candidatesResult.value);
       if (eventsResult.status === 'fulfilled') setEvents(eventsResult.value);
     });
     return () => { active = false; };
-  }, [selected, snapshot.serverTime]);
+  }, [selectedId]);
 
   const openConfirmation = (vehicleId: string, manual: boolean) => {
     const vehicle = vehicles.find((item) => item.id === vehicleId);
