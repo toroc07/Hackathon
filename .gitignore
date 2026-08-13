@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+**/node_modules/
+
+# Build
+.next/
+dist/
+out/
+*.tsbuildinfo
+
+# Base de datos SQLite — estado local, nunca versionar
+packages/db/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Tiles PMTiles — se descargan en setup, pesan demasiado para el repo
+*.pmtiles
+
+# Entorno / secretos
+.env
+.env.*
+!.env.example
+
+# Logs / temporales
+*.log
+.DS_Store

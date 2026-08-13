@@ -1,0 +1,28 @@
+{
+  "name": "hackathon-dispatch",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plataforma de despacho coordinado de emergencias — Cartagena",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=@dispatch/web",
+    "build": "npm run build --workspace=@dispatch/web",
+    "start": "npm run start --workspace=@dispatch/web",
+    "typecheck": "tsc -b packages/contracts && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:reset": "npm run db:reset --workspace=@dispatch/db",
+    "db:seed": "npm run db:seed --workspace=@dispatch/db",
+    "check:layers": "node scripts/check-layers.mjs",
+    "ci": "npm run typecheck && npm run check:layers && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
