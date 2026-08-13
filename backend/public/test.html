@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Probar transcripción de audio</title>
+</head>
+<body style="font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px;">
+  <h1>🎙️ Probar audio → transcripción</h1>
+  <p>Graba una nota de voz, se envía sola a <code>/api/incidents/transcribe</code> al detener.</p>
+
+  <button id="rec">Grabar</button>
+  <button id="stop" disabled>Detener y enviar</button>
+  <p id="status"></p>
+
+  <audio id="playback" controls style="display:block; margin-top:1rem; width:100%;"></audio>
+  <pre id="result" style="background:#f4f4f4; padding:1rem; white-space:pre-wrap; word-break:break-word;"></pre>
+
+  <script>
+    let mediaRecorder;
+    let chunks = [];
+
+    const recBtn = document.getElementById('rec');
+    const stopBtn = document.getElementById('stop');
+    const statusEl = document.getElementById('status');
+    const playback = document.getElementById('playback');
+    const resultEl = document.getElementById('result');
+
+    recBtn.onclick = async () => {
+      resultEl.textContent = '';
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      chunks = [];
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+        playback.src = URL.createObjectURL(blob);
+        stream.getTracks().forEach((t) => t.stop());
+        statusEl.textContent = 'Transcribiendo…';
+
+        const form = new FormData();
+        form.append('audio', blob, 'nota.webm');
+        try {
+          const res = await fetch('/api/incidents/transcribe', { method: 'POST', body: form });
+          const json = await res.json();
+          resultEl.textContent = JSON.stringify(json, null, 2);
+          statusEl.textContent = res.ok ? 'Listo ✅' : 'Error ❌ (status ' + res.status + ')';
+        } catch (err) {
+          statusEl.textContent = 'Error de red';
+          resultEl.textContent = String(err);
+        }
+      };
+      mediaRecorder.start();
+      statusEl.textContent = 'Grabando…';
+      recBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      recBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>

@@ -5,13 +5,15 @@
   "description": "Plataforma de despacho coordinado de emergencias — Cartagena",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "backend"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "dev": "npm run dev --workspace=@dispatch/web",
+    "dev:audio": "npm run dev --workspace=@dispatch/audio-service",
     "build": "npm run build --workspace=@dispatch/web",
     "start": "npm run start --workspace=@dispatch/web",
     "typecheck": "tsc -b packages/contracts && npm run typecheck --workspaces --if-present",
