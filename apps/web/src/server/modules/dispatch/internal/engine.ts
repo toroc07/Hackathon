@@ -2,8 +2,11 @@ import {
   STRATEGY_VERSION,
   assertIncidentTransition,
   type Assignment,
+  type CandidateBreakdown,
   type DispatchRequest,
   type DispatchResponse,
+  type EtaSource,
+  type ExclusionReason,
   type RejectReason,
 } from '@dispatch/contracts';
 import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
@@ -20,6 +23,33 @@ export interface DispatchOptions {
   triggeredBy?: 'AUTO' | 'DISPATCHER' | 'RETRY' | 'TIMEOUT';
   triggeredByUserId?: string | null;
   idempotencyKey?: string | null;
+}
+
+interface DispatchRunRow extends Record<string, unknown> {
+  id: string;
+  strategy_version: string;
+  recommended_vehicle_id: string | null;
+  recommendation_rationale: string | null;
+  duration_ms: number;
+  created_at: number;
+}
+
+interface CandidateRow extends Record<string, unknown> {
+  vehicle_id: string;
+  callsign: string;
+  rank: number | null;
+  eta_seconds: number;
+  distance_m: number;
+  straight_line_m: number;
+  eta_source: EtaSource;
+  capability_penalty: number;
+  coverage_penalty: number;
+  workload_penalty: number;
+  stale_location_penalty: number;
+  operational_penalty: number;
+  total_score: number;
+  excluded_reason: ExclusionReason | null;
+  explanation: string;
 }
 
 async function persistRun(
@@ -142,30 +172,30 @@ export async function getPersistedCandidates(
   incidentId: string,
   q: Queryable = db(),
 ): Promise<DispatchResponse> {
-  const run = await q.one<Record<string, unknown>>(
+  const run = await q.one<DispatchRunRow>(
     `SELECT * FROM dispatch_runs WHERE incident_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
     [incidentId],
   );
   if (!run) throw new DispatchNotFoundError('Corrida de despacho para incidente', incidentId);
-  const rows = await q.many<Record<string, unknown>>(`SELECT dc.*, v.callsign
+  const rows = await q.many<CandidateRow>(`SELECT dc.*, v.callsign
     FROM dispatch_candidates dc JOIN vehicles v ON v.id = dc.vehicle_id
     WHERE dc.dispatch_run_id = ?
     ORDER BY CASE WHEN dc.rank IS NULL THEN 1 ELSE 0 END, dc.rank, v.callsign`, [run.id]);
-  const mapped = rows.map((row) => ({
-    vehicleId: String(row.vehicle_id), callsign: String(row.callsign), rank: row.rank === null ? null : Number(row.rank),
-    etaSeconds: Number(row.eta_seconds ?? 0), distanceM: Number(row.distance_m ?? 0), straightLineM: Number(row.straight_line_m ?? 0),
-    etaSource: String(row.eta_source ?? 'HAVERSINE_URBAN') as 'HAVERSINE_URBAN', capabilityPenalty: Number(row.capability_penalty),
-    coveragePenalty: Number(row.coverage_penalty), workloadPenalty: Number(row.workload_penalty), staleLocationPenalty: Number(row.stale_location_penalty),
-    operationalPenalty: Number(row.operational_penalty), totalScore: Number(row.total_score ?? 0), excludedReason: row.excluded_reason ? String(row.excluded_reason) : null,
-    explanation: String(row.explanation ?? ''),
+  const mapped: CandidateBreakdown[] = rows.map((row) => ({
+    vehicleId: row.vehicle_id, callsign: row.callsign, rank: row.rank,
+    etaSeconds: row.eta_seconds, distanceM: row.distance_m, straightLineM: row.straight_line_m,
+    etaSource: row.eta_source, capabilityPenalty: row.capability_penalty,
+    coveragePenalty: row.coverage_penalty, workloadPenalty: row.workload_penalty,
+    staleLocationPenalty: row.stale_location_penalty, operationalPenalty: row.operational_penalty,
+    totalScore: row.total_score, excludedReason: row.excluded_reason, explanation: row.explanation,
   }));
   const candidates = mapped.filter((candidate) => candidate.excludedReason === null);
   const excluded = mapped.filter((candidate) => candidate.excludedReason !== null);
   return {
-    dispatchRunId: String(run.id), incidentId, strategyVersion: String(run.strategy_version), candidates, excluded,
-    recommendedVehicleId: run.recommended_vehicle_id ? String(run.recommended_vehicle_id) : null,
-    recommendationRationale: run.recommendation_rationale ? String(run.recommendation_rationale) : null,
-    assignment: null, durationMs: Number(run.duration_ms ?? 0), computedAt: Number(run.created_at),
+    dispatchRunId: run.id, incidentId, strategyVersion: run.strategy_version, candidates, excluded,
+    recommendedVehicleId: run.recommended_vehicle_id,
+    recommendationRationale: run.recommendation_rationale,
+    assignment: null, durationMs: run.duration_ms, computedAt: run.created_at,
   };
 }
 
