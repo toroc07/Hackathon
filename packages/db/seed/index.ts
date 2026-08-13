@@ -1,12 +1,20 @@
 import { MOCK_FACILITIES, MOCK_ZONES } from '@dispatch/contracts';
 import { getDatabase, runMigrations, type SqliteDatabase } from '../src/index.js';
 
-const SEED_NOW = 1_776_000_000_000;
 const VEHICLE_COUNT = 30;
 const LEVELS = ['BLS', 'BLS', 'ALS', 'MEDICAL_MOTO', 'RESCUE'] as const;
 
 export function seedDatabase(connection: SqliteDatabase = getDatabase()): void {
   runMigrations(connection);
+
+  // Las POSICIONES son deterministas (se derivan geométricamente del índice),
+  // pero los TIMESTAMPS deben ser frescos en cada seed.
+  //
+  // Con una constante fija aquí, el GPS sembrado nacía con meses de antigüedad
+  // y el motor excluía toda la flota por LOCATION_TOO_STALE (corte: 5 min):
+  // cada incidente terminaba en NO_RESOURCE y la demo mostraba cero unidades
+  // disponibles. La demo sigue siendo reproducible; lo que se mueve es el reloj.
+  const SEED_NOW = Date.now();
 
   connection.transaction(() => {
     connection.prepare(`INSERT INTO organizations (id, name, type, created_at)
