@@ -15,6 +15,12 @@ import { assignmentActionOutcome } from './responderState';
  *  RESCUE en el seed para no quedar nunca excluida por capacidad. */
 const UNIVERSAL_VEHICLE_ID = 'seed-vehicle-05';
 
+/** Centro de Cartagena — respaldo cuando el navegador no da permiso de GPS
+ *  (o tarda). Sin esto, negar el permiso deja la unidad sin ubicación fresca
+ *  para siempre y el despacho nunca encuentra candidato (§ demo: que nunca
+ *  se quede sin asignar por un permiso del navegador). */
+const FALLBACK_LOCATION = { lat: 10.4056, lng: -75.5144 };
+
 const GPS_LABELS: Record<GpsState, string> = {
   waiting: 'Buscando GPS', sending: 'GPS en vivo', offline: 'GPS sin conexión',
   denied: 'GPS sin permiso', unsupported: 'GPS no disponible',
@@ -64,12 +70,28 @@ export function ResponderClient() {
     if (assignment?.status === 'OFFERED') navigator.vibrate?.([500, 180, 500, 180, 900]);
   }, [assignment?.id, assignment?.status]);
 
+  // Late de respaldo con el centro de Cartagena: el despacho excluye una
+  // unidad con ubicación de más de 5 min. Si el navegador niega el GPS o
+  // tarda, esto igual mantiene la unidad "viva" para el motor de despacho —
+  // en cuanto haya GPS real, sus posiciones son más recientes y ganan.
+  useEffect(() => {
+    const send = () => {
+      void fetch(`/api/vehicles/${UNIVERSAL_VEHICLE_ID}/location`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ positions: [{ ...FALLBACK_LOCATION, recordedAt: Date.now() }] }),
+      });
+    };
+    send();
+    const timer = window.setInterval(send, 20_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Sin Command Center no hay humano que dispare el despacho: la primera
   // pasada corre sola en app/api/incidents/audio/route.ts. Si esa pasada no
   // encontró ninguna unidad con ubicación fresca (p. ej. este panel recién se
-  // abrió y el GPS todavía no llegó), reintenta apenas el GPS confirme envío.
+  // abrió), reintenta seguido hasta que haya asignación.
   useEffect(() => {
-    if (!incident || assignment || tracking.state !== 'sending' || redispatchingRef.current) return;
+    if (!incident || assignment || redispatchingRef.current) return;
     redispatchingRef.current = true;
     const timer = window.setTimeout(() => {
       void fetch(`/api/incidents/${encodeURIComponent(incident.id)}/dispatch`, {
@@ -80,9 +102,9 @@ export function ResponderClient() {
         redispatchingRef.current = false;
         void live.refresh();
       });
-    }, 1_500);
+    }, 2_000);
     return () => window.clearTimeout(timer);
-  }, [incident, assignment, tracking.state, live]);
+  }, [incident, assignment, live]);
 
   /** Acepta la oferta si hace falta y marca la unidad en camino en un solo
    *  paso — el ciudadano ya lo ve reflejado en su seguimiento en vivo. */
@@ -153,17 +175,21 @@ export function ResponderClient() {
         </div>
       </section>
 
-      {incident && assignment && (
+      {incident && (
         <div className="mt-auto flex flex-col gap-3 pt-5">
+          {/* Llamar no depende de que ya haya asignación: es el contacto del
+           *  reporte, útil desde el primer segundo. */}
           {reporterContact && (
             <a href={`tel:${reporterContact}`} className="pressable flex min-h-touch-lg items-center justify-center gap-2 rounded-xl border border-edge-strong font-semibold text-info">
               <PhoneIcon size={20} /> Llamar al ciudadano
             </a>
           )}
-          {notified ? (
-            <p className="flex items-center justify-center gap-2 rounded-xl bg-ok-soft py-3 font-semibold text-ok"><CheckIcon size={18} /> Ya avisamos que vas en camino</p>
-          ) : (
-            <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void notifyEnRoute()}>Notificar: voy en camino</Button>
+          {assignment && (
+            notified ? (
+              <p className="flex items-center justify-center gap-2 rounded-xl bg-ok-soft py-3 font-semibold text-ok"><CheckIcon size={18} /> Ya avisamos que vas en camino</p>
+            ) : (
+              <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void notifyEnRoute()}>Notificar: voy en camino</Button>
+            )
           )}
         </div>
       )}
