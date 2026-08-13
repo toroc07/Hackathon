@@ -1,50 +1,157 @@
-import Database from 'better-sqlite3';
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+/**
+ * Cliente PostgreSQL.
+ *
+ * Migrado desde better-sqlite3 para poder desplegar en Vercel: el filesystem
+ * serverless es efimero, un archivo SQLite no sobrevive entre invocaciones.
+ *
+ * DIFERENCIA QUE IMPORTA: better-sqlite3 era sincrono y de un solo escritor,
+ * lo que hacia casi imposible intercalar dos asignaciones. Postgres permite
+ * escrituras concurrentes reales desde varias instancias serverless, asi que
+ * la correccion ahora depende de:
+ *   1. UPDATE condicional (... WHERE status='AVAILABLE') — bloquea la fila
+ *   2. los indices unicos parciales de 002_constraints.sql
+ * Ambos ya estaban; aqui pasan de red de seguridad a mecanismo principal.
+ */
 
-type SqliteDatabase = InstanceType<typeof Database>;
-
-const DEFAULT_DATABASE_PATH = fileURLToPath(new URL('../data/dispatch.sqlite', import.meta.url));
+import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
 declare global {
   // eslint-disable-next-line no-var
-  var __dispatchSqlite: SqliteDatabase | undefined;
-  // eslint-disable-next-line no-var
-  var __dispatchDrizzle: BetterSQLite3Database | undefined;
+  var __dispatchPool: Pool | undefined;
 }
 
-export function databasePath(): string {
-  return resolve(process.env.DATABASE_PATH ?? DEFAULT_DATABASE_PATH);
+function createPool(): Pool {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      'DATABASE_URL no esta definida. Copia .env.example a .env.local y apunta ' +
+      'a tu Postgres (local o Vercel/Neon).',
+    );
+  }
+
+  return new Pool({
+    connectionString,
+    // Serverless: muchas instancias efimeras, cada una con pocas conexiones.
+    // Un pool grande por instancia agota el limite de conexiones del servidor.
+    max: process.env.VERCEL ? 1 : 10,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+    // Los Postgres gestionados (Neon, Vercel, Supabase) exigen TLS pero usan
+    // certificados que el trust store de Node no siempre reconoce.
+    ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
+      ? undefined
+      : { rejectUnauthorized: false },
+  });
 }
 
-function openDatabase(): SqliteDatabase {
-  const path = databasePath();
-  mkdirSync(dirname(path), { recursive: true });
-  const connection = new Database(path);
-  connection.pragma('journal_mode = WAL');
-  connection.pragma('foreign_keys = ON');
-  connection.pragma('busy_timeout = 5000');
-  connection.pragma('synchronous = NORMAL');
-  return connection;
+/** Singleton: el hot-reload de dev crearia un pool nuevo en cada recarga. */
+export function getPool(): Pool {
+  if (!globalThis.__dispatchPool) globalThis.__dispatchPool = createPool();
+  return globalThis.__dispatchPool;
 }
 
-export function getDatabase(): SqliteDatabase {
-  globalThis.__dispatchSqlite ??= openDatabase();
-  return globalThis.__dispatchSqlite;
+/**
+ * Traduce placeholders `?` (estilo SQLite) a `$1, $2...` (estilo Postgres).
+ *
+ * Existe para que la migracion de ~124 call sites sea mecanica en vez de una
+ * renumeracion a mano en cada consulta, que es exactamente donde se colarian
+ * los errores silenciosos. Respeta literales entre comillas simples y los
+ * operadores JSON de Postgres (`?`, `?|`, `?&`), que hoy no usamos pero
+ * romperian el dia que alguien los use.
+ */
+export function toPgPlaceholders(sql: string): string {
+  let out = '';
+  let index = 0;
+  let inString = false;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i]!;
+
+    if (ch === "'") {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+    if (!inString && ch === '?') {
+      const next = sql[i + 1];
+      if (next === '|' || next === '&' || next === '?') {   // operador JSON
+        out += ch + next;
+        i += 1;
+        continue;
+      }
+      index += 1;
+      out += `$${index}`;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
-export function getOrm(): BetterSQLite3Database {
-  globalThis.__dispatchDrizzle ??= drizzle(getDatabase());
-  return globalThis.__dispatchDrizzle;
+export interface Queryable {
+  /** Una fila o undefined. Reemplaza a `.get()`. */
+  one<T extends QueryResultRow = QueryResultRow>(sql: string, params?: unknown[]): Promise<T | undefined>;
+  /** Todas las filas. Reemplaza a `.all()`. */
+  many<T extends QueryResultRow = QueryResultRow>(sql: string, params?: unknown[]): Promise<T[]>;
+  /** Escritura. `changes` reemplaza a `.run().changes` — clave para el UPDATE
+   *  condicional de la asignacion atomica: changes===0 significa que perdiste
+   *  la carrera. */
+  run(sql: string, params?: unknown[]): Promise<{ changes: number }>;
+  /** Varias sentencias sin parametros. Reemplaza a `.exec()`. */
+  exec(sql: string): Promise<void>;
 }
 
-export function closeDatabase(): void {
-  const connection = globalThis.__dispatchSqlite;
-  if (connection?.open) connection.close();
-  globalThis.__dispatchSqlite = undefined;
-  globalThis.__dispatchDrizzle = undefined;
+function wrap(runner: Pool | PoolClient): Queryable {
+  return {
+    async one<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
+      const result = await runner.query<T>(toPgPlaceholders(sql), params);
+      return result.rows[0];
+    },
+    async many<T extends QueryResultRow = QueryResultRow>(sql: string, params: unknown[] = []) {
+      const result = await runner.query<T>(toPgPlaceholders(sql), params);
+      return result.rows;
+    },
+    async run(sql: string, params: unknown[] = []) {
+      const result = await runner.query(toPgPlaceholders(sql), params);
+      return { changes: result.rowCount ?? 0 };
+    },
+    async exec(sql: string) {
+      await runner.query(sql);
+    },
+  };
 }
 
-export type { SqliteDatabase };
+/** Acceso a la base fuera de transaccion. */
+export function db(): Queryable {
+  return wrap(getPool());
+}
+
+/**
+ * Transaccion. El callback recibe un Queryable ligado a UNA conexion:
+ * todo lo que se ejecute dentro comparte transaccion.
+ *
+ * Si el callback lanza, se hace ROLLBACK y el error se propaga. Es lo que
+ * permite que la asignacion atomica sea todo-o-nada: o se toma el vehiculo,
+ * se crea la asignacion y se escribe el evento, o no pasa nada.
+ */
+export async function tx<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(wrap(client));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => { /* la conexion ya murio */ });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function closePool(): Promise<void> {
+  if (globalThis.__dispatchPool) {
+    await globalThis.__dispatchPool.end();
+    globalThis.__dispatchPool = undefined;
+  }
+}
