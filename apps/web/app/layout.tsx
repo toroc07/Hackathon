@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: 'Despacho Cartagena',
   description: 'Coordinación local de respuesta prehospitalaria',
   icons: { icon: '/images/isotipo_con_fondo.png', apple: '/images/isotipo_con_fondo.png' },
+  manifest: '/manifest.webmanifest',
   // Se instala en la pantalla de inicio y abre a pantalla completa: en una
   // emergencia nadie quiere buscar una pestaña del navegador.
   appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Emergencias' },

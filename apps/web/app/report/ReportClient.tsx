@@ -33,7 +33,7 @@ function audioId(base64: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export function ReportClient() {
+export function ReportClient({ citizenPhone }: { citizenPhone: string }) {
   const router = useRouter();
   const recorder = useAudioRecorder();
   const [stage, setStage] = useState<Stage>('locating');
@@ -110,6 +110,9 @@ export function ReportClient() {
           point: { lat: position.lat, lng: position.lng },
           accuracyM: position.accuracyM,
           fallbackType: fallbackType ?? undefined,
+          // Ya lo dejaste al registrarte — no se te vuelve a pedir. Es lo que
+          // permite al responder llamarte si el audio no dio suficiente info.
+          reporterContact: citizenPhone,
         }),
       });
       if (!response.ok) {

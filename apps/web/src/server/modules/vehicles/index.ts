@@ -1,5 +1,5 @@
-import { assertVehicleTransition, type VehicleStatus, type VehicleWithLocation } from '@dispatch/contracts';
-import { db, tx, type Queryable } from '@/src/server/infra/db';
+import { assertVehicleTransition, type RegisterVehicleRequest, type VehicleStatus, type VehicleWithLocation } from '@dispatch/contracts';
+import { db, newId, tx, type Queryable } from '@/src/server/infra/db';
 import { bus } from '@/src/server/infra/bus';
 import { HttpError } from '@/src/server/infra/errors';
 import { recordLocations, type LocationPosition } from './internal/locations';
@@ -8,10 +8,34 @@ import {
   findActiveAssignment,
   findAvailableVehicles,
   findVehicle,
+  findVehicleByCallsign,
+  findVehicleByPlate,
   findVehicles,
+  insertVehicle,
   setVehicleState,
   type ActiveAssignmentContext,
 } from './internal/repository';
+
+/** org_id fijo: la demo es de una sola operadora. */
+const ORG_ID = 'org-ems';
+
+/** Alta de una ambulancia nueva — placa + unidad + hospital (§33). Arranca
+ *  OFFLINE; el responder la ve en el selector e inicia turno como cualquier
+ *  otra unidad de la flota sembrada. */
+export async function registerVehicle(input: RegisterVehicleRequest): Promise<{ vehicleId: string; callsign: string }> {
+  const existing = await findVehicleByPlate(input.plate);
+  if (existing) throw new HttpError(409, 'VALIDATION_FAILED', `La placa ${input.plate} ya está registrada`);
+  if (await findVehicleByCallsign(input.callsign)) {
+    throw new HttpError(409, 'VALIDATION_FAILED', `Ya existe una unidad con el número ${input.callsign}`);
+  }
+  const now = Date.now();
+  const id = newId(now);
+  await insertVehicle({
+    id, orgId: ORG_ID, callsign: input.callsign, capabilityLevel: input.capabilityLevel,
+    plate: input.plate, hospitalFacilityId: input.hospitalFacilityId, createdAt: now,
+  });
+  return { vehicleId: id, callsign: input.callsign };
+}
 
 export async function listVehicles(
   options: { availableOnly?: boolean } = {},

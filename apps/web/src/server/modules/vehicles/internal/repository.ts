@@ -136,6 +136,35 @@ export async function findActiveAssignment(
   };
 }
 
+export interface NewVehicleInput {
+  id: string;
+  orgId: string;
+  callsign: string;
+  capabilityLevel: VehicleWithLocation['capabilityLevel'];
+  plate: string;
+  hospitalFacilityId: string;
+  createdAt: number;
+}
+
+/** Alta de una unidad nueva — arranca OFFLINE, sin turno, hasta que el
+ *  responder inicie turno (mismo camino que la flota sembrada). */
+export async function insertVehicle(input: NewVehicleInput, q: Queryable = db()): Promise<void> {
+  await q.run(
+    `INSERT INTO vehicles
+      (id, org_id, callsign, status, capability_level, capabilities, home_base_id, operating_zone_id, plate, hospital_facility_id, is_simulated, updated_at)
+     VALUES (?, ?, ?, 'OFFLINE', ?, '[]', ?, NULL, ?, ?, FALSE, ?)`,
+    [input.id, input.orgId, input.callsign, input.capabilityLevel, input.hospitalFacilityId, input.plate, input.hospitalFacilityId, input.createdAt],
+  );
+}
+
+export async function findVehicleByPlate(plate: string, q: Queryable = db()): Promise<{ id: string } | null> {
+  return (await q.one<{ id: string }>('SELECT id FROM vehicles WHERE plate = ?', [plate])) ?? null;
+}
+
+export async function findVehicleByCallsign(callsign: string, q: Queryable = db()): Promise<{ id: string } | null> {
+  return (await q.one<{ id: string }>('SELECT id FROM vehicles WHERE callsign = ?', [callsign])) ?? null;
+}
+
 export async function vehicleExists(vehicleId: string, q: Queryable = db()): Promise<boolean> {
   return (await q.one('SELECT 1 FROM vehicles WHERE id = ?', [vehicleId])) !== undefined;
 }

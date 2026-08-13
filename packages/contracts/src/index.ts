@@ -17,4 +17,5 @@ export * from './triage.js';
 export * from './models.js';
 export * from './api.js';
 export * from './audio.js';
+export * from './accounts.js';
 export * from './mocks.js';

@@ -5,7 +5,7 @@ import {
   type ApiError, type AssignmentStatus, type Incident, type RejectReason, type VehicleWithLocation,
 } from '@dispatch/contracts';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertIcon, AmbulanceIcon, CheckIcon, LocationIcon } from '@/src/components/ui/icons';
+import { AlertIcon, AmbulanceIcon, CheckIcon, LocationIcon, PhoneIcon } from '@/src/components/ui/icons';
 import { Badge, Button } from '@/src/components/ui';
 import { useLiveVehicles } from '@/src/hooks/useLiveVehicles';
 import { useResponderVehicle } from '@/src/hooks/useResponderVehicle';
@@ -155,6 +155,14 @@ export function ResponderClient() {
         <RouteMap vehicle={vehicle} incident={context?.incident ?? null} destination={assignmentStatus === 'TRANSPORTING' ? destination : null} />
         <div className="p-4">
           {context ? <><h2 className="text-xl font-bold">{assignmentStatus === 'TRANSPORTING' ? destination?.name ?? 'Centro asistencial' : context.incident.address ?? 'Ubicación del incidente'}</h2><p className="mt-1 text-sm text-content-secondary">{incidentTypeLabel(context.incident.type)} · {context.incident.patientCount} paciente(s)</p></> : <><h2 className="text-xl font-bold">Disponible para asignaciones</h2><p className="mt-1 text-sm text-content-secondary">Te avisaremos inmediatamente cuando llegue una emergencia.</p></>}
+          {context && live.data.reporterContact && (
+            <a
+              href={`tel:${live.data.reporterContact}`}
+              className="pressable mt-3 flex min-h-touch items-center justify-center gap-2 rounded-xl border border-edge-strong font-semibold text-info"
+            >
+              <PhoneIcon size={18} /> Llamar al ciudadano · {live.data.reporterContact}
+            </a>
+          )}
         </div>
       </section>
 
@@ -171,7 +179,67 @@ export function ResponderClient() {
 }
 
 function VehiclePicker({ vehicles, onSelect }: { vehicles: VehicleWithLocation[]; onSelect: (id: string) => void }) {
-  return <main className="app-light responder-shell"><header className="safe-top"><p className="text-xs font-bold uppercase tracking-[.16em] text-ok">App ambulancia</p><h1 className="mt-2 text-3xl font-bold">Selecciona tu unidad</h1><p className="mt-2 text-content-secondary">Esta selección queda guardada en el dispositivo.</p></header><div className="mt-6 grid gap-3">{vehicles.slice(0, 12).map((vehicle) => <button key={vehicle.id} type="button" onClick={() => onSelect(vehicle.id)} className="state-card pressable flex min-h-touch-lg items-center gap-4 p-4 text-left"><span className="grid h-12 w-12 place-items-center rounded-xl bg-ok-soft text-ok"><AmbulanceIcon size={28} /></span><span className="flex-1"><strong className="block text-lg">{vehicle.callsign}</strong><span className="text-sm text-content-muted">{vehicle.capabilityLevel} · {vehicle.status}</span></span></button>)}</div></main>;
+  const [registering, setRegistering] = useState(false);
+  return (
+    <main className="app-light responder-shell">
+      <header className="safe-top"><p className="text-xs font-bold uppercase tracking-[.16em] text-ok">App ambulancia</p><h1 className="mt-2 text-3xl font-bold">Selecciona tu unidad</h1><p className="mt-2 text-content-secondary">Esta selección queda guardada en el dispositivo.</p></header>
+      {registering ? (
+        <RegisterVehicleForm onDone={(id) => onSelect(id)} onCancel={() => setRegistering(false)} />
+      ) : (
+        <>
+          <div className="mt-6 grid gap-3">{vehicles.slice(0, 12).map((vehicle) => <button key={vehicle.id} type="button" onClick={() => onSelect(vehicle.id)} className="state-card pressable flex min-h-touch-lg items-center gap-4 p-4 text-left"><span className="grid h-12 w-12 place-items-center rounded-xl bg-ok-soft text-ok"><AmbulanceIcon size={28} /></span><span className="flex-1"><strong className="block text-lg">{vehicle.callsign}</strong><span className="text-sm text-content-muted">{vehicle.capabilityLevel} · {vehicle.status}</span></span></button>)}</div>
+          <button type="button" onClick={() => setRegistering(true)} className="pressable mt-4 min-h-touch w-full rounded-xl border border-edge-strong font-semibold text-content-secondary">+ Registrar unidad nueva</button>
+        </>
+      )}
+    </main>
+  );
+}
+
+/** Alta simple de ambulancia: placa + número de unidad + hospital. */
+function RegisterVehicleForm({ onDone, onCancel }: { onDone: (vehicleId: string) => void; onCancel: () => void }) {
+  const [plate, setPlate] = useState('');
+  const [callsign, setCallsign] = useState('');
+  const [hospitalFacilityId, setHospitalFacilityId] = useState(MOCK_FACILITIES.find((f) => f.type === 'HOSPITAL')?.id ?? 'f-bocagrande');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch('/api/vehicles/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plate, callsign, hospitalFacilityId, capabilityLevel: 'BLS' }),
+      });
+      const payload = await response.json() as { vehicleId?: string; error?: { message?: string } };
+      if (!response.ok || !payload.vehicleId) throw new Error(payload.error?.message ?? 'No se pudo registrar la unidad');
+      onDone(payload.vehicleId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No se pudo registrar la unidad');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="mt-6 flex flex-col gap-4">
+      <label className="block text-sm font-semibold text-content-secondary">Placa
+        <input required value={plate} onChange={(e) => setPlate(e.target.value)} className="mt-2 w-full rounded-xl border border-edge-strong bg-surface-base px-4 py-3 text-[16px] text-content" placeholder="ABC123" />
+      </label>
+      <label className="block text-sm font-semibold text-content-secondary">Número de unidad
+        <input required value={callsign} onChange={(e) => setCallsign(e.target.value)} className="mt-2 w-full rounded-xl border border-edge-strong bg-surface-base px-4 py-3 text-[16px] text-content" placeholder="A31" />
+      </label>
+      <label className="block text-sm font-semibold text-content-secondary">Hospital
+        <select value={hospitalFacilityId} onChange={(e) => setHospitalFacilityId(e.target.value)} className="mt-2 w-full rounded-xl border border-edge-strong bg-surface-base px-4 py-3 text-content">
+          {MOCK_FACILITIES.filter((f) => f.type !== 'BASE').map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+        </select>
+      </label>
+      {error && <p role="alert" className="flex items-start gap-2 text-emergency text-sm"><AlertIcon size={18} /> <span>{error}</span></p>}
+      <Button type="submit" disabled={busy} aria-busy={busy} className="min-h-touch-lg w-full text-[17px]">{busy ? 'Registrando…' : 'Registrar y continuar'}</Button>
+      <button type="button" onClick={onCancel} className="min-h-touch text-sm font-semibold text-content-secondary">Cancelar</button>
+    </form>
+  );
 }
 
 function ResponderHeader({ callsign, gps, queued, tone, onChange }: { callsign: string; gps: GpsState; queued: number; tone: 'green' | 'red' | 'purple' | 'blue'; onChange: () => void }) {

@@ -9,6 +9,9 @@ const TOPICS = ['vehicle:updated', 'vehicle:location', 'assignment:updated'] as 
 export interface ResponderVehicleData {
   vehicle: VehicleWithLocation | null;
   activeAssignment: { assignment: Assignment; incident: Incident } | null;
+  /** Teléfono de algún reporte del incidente activo, para "Llamar al
+   *  ciudadano" — null si no hay asignación o el reporte no dejó contacto. */
+  reporterContact: string | null;
 }
 
 function selectResponderVehicle(payload: unknown): ResponderVehicleData {
@@ -20,7 +23,7 @@ function selectResponderVehicle(payload: unknown): ResponderVehicleData {
 
 export function useResponderVehicle(vehicleId: string | null) {
   const live = useLiveResource({
-    initialData: { vehicle: null, activeAssignment: null },
+    initialData: { vehicle: null, activeAssignment: null, reporterContact: null },
     endpoint: vehicleId ? `/api/vehicles/${encodeURIComponent(vehicleId)}` : '/api/vehicles/__none__',
     topics: TOPICS,
     select: selectResponderVehicle,
