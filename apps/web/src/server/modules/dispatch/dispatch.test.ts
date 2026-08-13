@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { totalScore } from '@dispatch/contracts';
-import { db, dropAll, runMigrations, type Queryable } from '@dispatch/db';
+import { db, type Queryable } from '@dispatch/db';
+import { dropAll, runMigrations } from '@dispatch/db/migrations';
 import { runDispatch, assignVehicle, expireStaleOffers } from './index';
 import { calculateCandidates } from './internal/candidates';
 import { scoreCandidate } from './internal/scoring';

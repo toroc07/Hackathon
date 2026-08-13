@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { InvalidTransitionError } from '@dispatch/contracts';
-import { closePool, db, dropAll, runMigrations } from '@dispatch/db';
+import { closePool, db } from '@dispatch/db';
+import { dropAll, runMigrations } from '@dispatch/db/migrations';
 import { seedDatabase } from '../../../../../../packages/db/seed/index';
 import {
   acceptAssignment,
