@@ -23,9 +23,11 @@ Luego abre:
 
 | Ruta | Quién la usa |
 |---|---|
-| `/report` | Ciudadano que reporta una emergencia (sin login) |
-| `/responder` | Tripulación de la ambulancia |
-| `/command` | Despachador / centro de mando |
+| `/` | Ciudadano: reporta la emergencia **por voz**, sin login, con confirmación |
+| `/api/track/[token]` | Seguimiento en vivo de la ambulancia con un token, sin cuenta |
+
+> Las antiguas pantallas `/report`, `/responder` y `/command` se unificaron en
+> una sola experiencia ciudadana: grabar → enviar → confirmar.
 
 ### Base de datos
 
@@ -49,13 +51,17 @@ Monolito modular: cinco dominios con fronteras explícitas, separables después.
 
 ```
 packages/
-  contracts/     ⚠ CONGELADO — fuente única de verdad, compartida front/back
-  db/            Postgres: cliente, migraciones, seed
+  contracts/          ⚠ CONGELADO — fuente única de verdad, compartida front/back
+  db/                 Postgres: cliente, migraciones, seed
 apps/web/
-  app/report|responder|command/   las tres experiencias
-  app/api/**                      route handlers DELGADOS (validan y delegan)
-  src/server/modules/**           ← LA LÓGICA DE NEGOCIO VIVE AQUÍ
-  src/server/infra/**             db · bus · logger · session · errors
+  app/                               landing + reporte por voz (una sola pantalla)
+  app/api/**                         route handlers DELGADOS (validan y delegan)
+  src/server/modules/**              ← LA LÓGICA DE NEGOCIO VIVE AQUÍ
+  src/server/infra/**                db · bus · logger · session · errors
+  src/server/test-helpers.ts         guard para tests que recrean el esquema
+scripts/
+  check-layers.mjs                   valida la frontera internal/* de cada módulo
+backend/                             servicio de audio por teléfono (opcional)
 ```
 
 ### Reglas que no se negocian
@@ -73,6 +79,12 @@ apps/web/
 5. **Un módulo solo importa la interfaz pública de otro** (`modules/x/index.ts`),
    nunca su `internal/`.
 6. **El módulo `dispatch` es el único escritor de la tabla `assignments`.**
+7. **Las capas se validan en CI** (`npm run check:layers`): nadie puede
+   importar `modules/x/internal/*` desde fuera de su módulo; las rutas entran
+   por la interfaz pública de `modules/x/index.ts`.
+8. **Los tests que recrean el esquema solo corren contra Postgres local.**
+   `isLocalPostgres()` los salta cuando `DATABASE_URL` apunta a una base remota
+   (misma convención que `db:reset`).
 
 ---
 
@@ -88,6 +100,27 @@ dist ≤ 150m + precisión GPS  Y  Δt ≤ 5min   Y tipo compatible  → fusiona
 dist ≤ 400m                  Y  Δt ≤ 10min                     → sugiere al operador
 resto                                                           → incidente nuevo
 ```
+
+### Reporte por voz
+
+`POST /api/incidents/audio` toma el audio del ciudadano, lo transcribe
+(véase [La capa de IA](#la-capa-de-ia-y-su-límite)) y delega en la misma
+maquinaria de los reportes escritos: dedupe → `triage()` → transición de
+estado. Peculiaridades:
+
+- **El reporte nunca se pierde por culpa de la transcripción.** Si ningún
+  motor responde, se crea igual con el audio guardado como evidencia y el
+  incidente queda marcado para revisión humana.
+- **Idempotencia por audio.** El cliente calcula un hash del audio y lo manda
+  como `Idempotency-Key`: reintentar reenvía la misma grabación y no duplica.
+- **Confirmación de tipo.** Si la confianza es baja o no hubo transcripción,
+  la app pide al ciudadano que confirme el tipo con botones
+  (`fallbackType`); el sistema nunca depende solo del audio para despachar.
+- **Seguimiento sin registro.** Se devuelve un token opaco de 128 bits que
+  alimenta `/api/track/[token]` (estilo Uber/Rappi, ver `contracts/audio.ts`).
+
+El tope de subida (`2 MB`, ~60s de opus) se valida **en el cliente y en el
+servidor**: decodificar un audio mentiroso de 50 MB tumbaría la función.
 
 ### Scoring en segundos-equivalentes
 
@@ -138,20 +171,51 @@ La IA **captura y estructura**. Las **reglas deciden**. El **humano manda**.
 reglas explícitas (`contracts/triage.ts`), cada una con su test, y el operador
 siempre puede sobrescribirla.
 
+### Transcripción de voz — Groq first
+
+El reporte por voz de la web transcribe con una cadena de motores en orden,
+y se corta en el primero que responde:
+
+```
+1. Groq Whisper        whisper-large-v3-turbo (API OpenAI-compatible)
+2. ElevenLabs Scribe   si el anterior no responde
+3. OpenAI Whisper      whisper-1
+```
+
+- **Presupuesto duro de 12s por motor** (`TRANSCRIPTION_TIMEOUT_MS`): un
+  proveedor lento no puede tumbar el endpoint.
+- **Degradación elegante.** Sin key configurada o con los tres motores caídos,
+  el reporte se crea igual con el audio guardado y `transcription: null`
+  (véase "Reporte por voz"). La UI responde con `needsConfirmation`.
+- **Solo el formato se estructura por modelo** (`suggestedType`, señales
+  críticas); son sugerencias que alimentan `triage()`. El motor que produjo la
+  transcripción se persiste (`engine`) para auditar cambios de proveedor.
+- **Confianza < 0.55** → revisión humana en vez de asumir que se entendió.
+
 ---
 
 ## Desarrollo
 
 ```bash
 npm run typecheck    # debe pasar limpio antes de abrir PR
-npm test             # tests por dominio + e2e que cruza los cuatro
+npm run check:layers # fronteras de módulos: nadie importa internal/* ajeno
+npm test             # tests por dominio + e2e
 npm run build
+npm run ci           # los cuatro en orden, como lo ve el CI
 ```
 
 Una feature no está lista porque compile. Antes de mergear:
-build y tipos pasan · tests relevantes pasan · contrato de API respetado ·
-sin condiciones de carrera evidentes · estados de error manejados ·
-la UI refleja el estado real del backend.
+build y tipos pasan · check:layers pasa · tests relevantes pasan ·
+contrato de API respetado · sin condiciones de carrera evidentes ·
+estados de error manejados · la UI refleja el estado real del backend.
+
+### Tests y base de datos
+
+`vitest` carga el entorno desde `.env.local` con `dotenv` (las variables ya
+definidas en el shell tienen prioridad). Los tres suites que **recrean el
+esquema** — e2e, dispatch y vehicles — se saltan
+(`describe.skipIf(!isLocalPostgres())`) cuando `DATABASE_URL` no es localhost:
+así nadie borra la base compartida del equipo por accidente al correr `npm test`.
 
 ### Migraciones — rangos por dominio
 
