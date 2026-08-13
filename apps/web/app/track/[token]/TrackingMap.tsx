@@ -204,10 +204,11 @@ export function TrackingMap({ tracking }: Props) {
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+function Legend({ token, label }: { token: string; label: string }) {
   return (
-    <span className="flex items-center gap-1.5 rounded-full bg-slate-950/70 px-2.5 py-1 text-slate-300">
-      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+    <span className="flex items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1
+                     text-content-secondary backdrop-blur-sm">
+      <span className="h-2 w-2 rounded-full" style={{ background: token }} />
       {label}
     </span>
   );
