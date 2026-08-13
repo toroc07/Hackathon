@@ -1,35 +1,23 @@
 'use client';
 
-import {
-  TRACKING_STEP,
-  type IncidentType,
-  type TrackingResponse,
-  type TrackingStep,
-} from '@dispatch/contracts';
+import { TRACKING_STEP, type IncidentType, type TrackingResponse, type TrackingStep } from '@dispatch/contracts';
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { AiCallWidget } from '@/src/components/call/AiCallWidget';
 import {
-  AlertIcon, AmbulanceIcon, CarCrashIcon, FallIcon, HeartIcon,
+  AlertIcon, AmbulanceIcon, CarCrashIcon, CheckIcon, FallIcon, HeartIcon,
   LungsIcon, TraumaIcon, UnconsciousIcon,
 } from '@/src/components/ui/icons';
 import { TrackingMap } from './TrackingMap';
 
-/** Polling y no SSE: en serverless el bus de eventos vive en la memoria de una
- *  instancia y no llegaría a los clientes conectados a otra. 4s se siente vivo
- *  sin castigar batería ni datos móviles. */
 const POLL_MS = 4_000;
-
-const STEP_ORDER: readonly TrackingStep[] = TRACKING_STEP;
-
 const LABELS: Record<TrackingStep, string> = {
-  RECEIVED: 'Reporte recibido',
-  ASSIGNING: 'Buscando unidad',
-  ON_THE_WAY: 'Unidad en camino',
-  ARRIVED: 'Unidad en el lugar',
-  TRANSPORTING: 'Traslado al hospital',
-  COMPLETED: 'Atención completada',
+  RECEIVED: 'Reporte recibido', ASSIGNING: 'Buscando ayuda', ON_THE_WAY: 'Ayuda en camino',
+  ARRIVED: 'Unidad en el lugar', TRANSPORTING: 'Traslado en curso', COMPLETED: 'Atención completada',
 };
-
+const STEP_TONE: Record<TrackingStep, string> = {
+  RECEIVED: '#e44b23', ASSIGNING: '#e6aa12', ON_THE_WAY: '#1684d6',
+  ARRIVED: '#6634ad', TRANSPORTING: '#087f5b', COMPLETED: '#087f5b',
+};
 const CONFIRM_TYPES: Array<{ type: IncidentType; label: string; Icon: ComponentType<{ size?: number }> }> = [
   { type: 'TRAFFIC_ACCIDENT', label: 'Accidente', Icon: CarCrashIcon },
   { type: 'CARDIAC', label: 'Dolor de pecho', Icon: HeartIcon },
@@ -43,6 +31,7 @@ export function TrackingClient({ token }: { token: string }) {
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
   const [offline, setOffline] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const timerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -51,61 +40,46 @@ export function TrackingClient({ token }: { token: string }) {
       if (!response.ok) throw new Error('not-found');
       setTracking((await response.json()) as TrackingResponse);
       setOffline(false);
-    } catch {
-      setOffline(true);
-    }
+    } catch { setOffline(true); }
   }, [token]);
 
   useEffect(() => {
     void load();
     const tick = () => { void load(); timerRef.current = window.setTimeout(tick, POLL_MS); };
     timerRef.current = window.setTimeout(tick, POLL_MS);
-    return () => { if (timerRef.current !== null) clearTimeout(timerRef.current); };
+    return () => { if (timerRef.current !== null) window.clearTimeout(timerRef.current); };
   }, [load]);
 
   const confirmType = useCallback(async (type: IncidentType) => {
-    setConfirmed(true);
+    setConfirming(true);
     try {
       const response = await fetch(`/api/track/${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }),
       });
-      if (response.ok) setTracking((await response.json()) as TrackingResponse);
-    } catch {
-      // Confirmar es una mejora, no un requisito: el incidente ya existe y el
-      // operador puede corregir el tipo desde el centro de mando.
-    }
+      if (!response.ok) throw new Error('confirmation-failed');
+      setTracking((await response.json()) as TrackingResponse);
+      setConfirmed(true);
+    } catch { setOffline(true); } finally { setConfirming(false); }
   }, [token]);
 
   if (!tracking) {
-    return (
-      <main className="min-h-dvh flex items-center justify-center safe-x">
-        <p className="text-content-secondary" role="status">
-          {offline ? 'Sin conexión. Reintentando…' : 'Cargando seguimiento…'}
-        </p>
-      </main>
-    );
+    return <main className="app-light mobile-app-shell safe-x flex items-center justify-center"><div className="text-center" role="status"><span className="mx-auto block h-10 w-10 animate-spin rounded-full border-4 border-edge-subtle border-t-emergency" /><p className="mt-4 text-content-secondary">{offline ? 'Sin conexión. Reintentando…' : 'Preparando tu seguimiento…'}</p></div></main>;
   }
 
+  const currentIndex = TRACKING_STEP.indexOf(tracking.step);
   return (
-    <main className="min-h-dvh safe-x pb-10">
+    <main className="app-light mobile-app-shell safe-x pb-10">
       <header className="safe-top pb-4">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-content-muted tnum">
-          {tracking.incidentCode}
-        </p>
-        {/* aria-live: el paso cambia solo, sin que la persona toque nada. */}
-        <h1 aria-live="polite" className="mt-1.5 text-[26px] font-semibold tracking-tight leading-tight">
-          {tracking.headline}
-        </h1>
-        <p className="mt-2 text-content-secondary text-[15px] leading-relaxed">
-          {tracking.detail}
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-bold uppercase tracking-[.16em] text-content-muted">Emergencia · <span className="tnum">{tracking.incidentCode}</span></p>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${offline ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok'}`}>{offline ? 'Reconectando' : 'En vivo'}</span>
+        </div>
+        <ProgressStrip currentIndex={currentIndex} />
       </header>
 
-      {tracking.etaSeconds !== null && <EtaBanner seconds={tracking.etaSeconds} />}
+      <StatusHero tracking={tracking} />
 
-      <section className="mt-5">
+      <section className="mt-4 overflow-hidden rounded-2xl border border-edge-subtle bg-surface-raised shadow-sm">
         <TrackingMap tracking={tracking} />
       </section>
 
@@ -113,171 +87,78 @@ export function TrackingClient({ token }: { token: string }) {
         <AiCallWidget />
       </section>
 
-      {tracking.vehicle && (
-        <section className="mt-4">
-          <VehicleCard
-            callsign={tracking.vehicle.callsign}
-            level={tracking.vehicle.capabilityLevel}
-            updatedAt={tracking.vehicle.updatedAt}
-            serverTime={tracking.serverTime}
-            distanceM={tracking.distanceM}
-          />
-        </section>
-      )}
+      {tracking.vehicle && <VehicleCard tracking={tracking} />}
 
       {tracking.step === 'ASSIGNING' && !confirmed && (
-        <section className="mt-5">
-          <ConfirmTypePanel onSelect={confirmType} />
-        </section>
+        <ConfirmTypePanel disabled={confirming} onSelect={confirmType} />
       )}
 
-      <section className="mt-6">
-        <Steps current={tracking.step} timeline={tracking.timeline} />
-      </section>
+      <Timeline current={tracking.step} timeline={tracking.timeline} />
 
       {tracking.reportCount > 1 && (
-        <section className="mt-5">
-          <p className="rounded-md bg-surface-raised ring-1 ring-edge-subtle px-4 py-3
-                        text-[14px] text-content-secondary leading-relaxed">
-            Otras <span className="tnum">{tracking.reportCount - 1}</span> personas reportaron
-            esta misma emergencia. Se atiende como un solo incidente para no enviar varias
-            ambulancias al mismo lugar.
-          </p>
-        </section>
-      )}
-
-      {offline && (
-        <p role="status" className="mt-5 flex items-center gap-2 text-[13px] text-warn">
-          <AlertIcon size={16} />
-          Sin conexión con el servidor. Reintentando…
+        <p className="mt-4 rounded-xl border border-info/20 bg-info-soft px-4 py-3 text-sm leading-relaxed text-info">
+          <strong>Tu reporte sí contó.</strong> Otras <span className="tnum">{tracking.reportCount - 1}</span> personas avisaron de la misma emergencia y el sistema las agrupó para enviar una sola unidad.
         </p>
       )}
+
+      {offline && <p role="status" className="mt-4 flex items-center gap-2 rounded-xl bg-warn-soft p-3 text-sm text-warn"><AlertIcon size={18} /> Mostrando la última actualización disponible. Reintentando…</p>}
+
+      <a href="tel:123" className="mt-5 flex min-h-touch items-center justify-center rounded-xl border border-edge-strong font-semibold text-content-secondary">Llamar al 123</a>
     </main>
   );
 }
 
-/** ETA grande: es lo único que la persona mira mientras espera. */
-function EtaBanner({ seconds }: { seconds: number }) {
-  const minutes = Math.max(1, Math.round(seconds / 60));
+function ProgressStrip({ currentIndex }: { currentIndex: number }) {
   return (
-    <div className="mt-2 rounded-lg bg-emergency-soft ring-1 ring-emergency-ring
-                    px-5 py-4 flex items-baseline gap-3">
-      <span className="text-[40px] leading-none font-semibold tnum text-emergency">
-        {minutes}
-      </span>
-      <span className="text-content-secondary text-[15px]">min aproximadamente</span>
-    </div>
-  );
-}
-
-function VehicleCard({
-  callsign, level, updatedAt, serverTime, distanceM,
-}: {
-  callsign: string; level: string; updatedAt: number; serverTime: number;
-  distanceM: number | null;
-}) {
-  const ageSeconds = Math.max(0, Math.round((serverTime - updatedAt) / 1000));
-  // Se muestra la antigüedad de la posición: si el GPS se congela, la persona
-  // debe saberlo en vez de ver un punto quieto y creer que la ambulancia paró.
-  const stale = ageSeconds > 30;
-
-  return (
-    <div className="rounded-md bg-surface-raised ring-1 ring-edge-subtle px-4 py-4
-                    flex items-center gap-4">
-      <span className="text-emergency shrink-0"><AmbulanceIcon size={32} /></span>
-      <div className="flex-1 min-w-0">
-        <p className="font-semibold text-[16px]">Unidad {callsign}</p>
-        <p className="text-[13px] text-content-muted">
-          {level}
-          {distanceM !== null && <> · a <span className="tnum">{(distanceM / 1000).toFixed(1)}</span> km</>}
-        </p>
+    <div className="mt-5" aria-label={`Paso ${currentIndex + 1} de ${TRACKING_STEP.length}: ${LABELS[TRACKING_STEP[currentIndex]]}`}>
+      <div className="flex items-center">
+        {TRACKING_STEP.map((step, index) => <div key={step} className="flex flex-1 items-center last:flex-none"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: index <= currentIndex ? STEP_TONE[step] : '#c8d0dc' }}>{index < currentIndex ? <CheckIcon size={15} /> : index + 1}</span>{index < TRACKING_STEP.length - 1 && <span className="h-1 flex-1" style={{ backgroundColor: index < currentIndex ? STEP_TONE[TRACKING_STEP[index + 1]] : '#dce2ea' }} />}</div>)}
       </div>
-      <span className={`text-[12px] shrink-0 ${stale ? 'text-warn' : 'text-ok'}`}>
-        {stale ? <>señal hace <span className="tnum">{ageSeconds}</span>s</> : 'en vivo'}
-      </span>
+      <p className="mt-2 text-center text-xs font-semibold text-content-secondary">{LABELS[TRACKING_STEP[currentIndex]]}</p>
     </div>
   );
 }
 
-function Steps({
-  current, timeline,
-}: {
-  current: TrackingStep; timeline: TrackingResponse['timeline'];
-}) {
-  const currentIndex = STEP_ORDER.indexOf(current);
-  const timeFor = (step: TrackingStep) => timeline.find((entry) => entry.step === step)?.at;
-
+function StatusHero({ tracking }: { tracking: TrackingResponse }) {
+  const minutes = tracking.etaSeconds === null ? null : Math.max(1, Math.round(tracking.etaSeconds / 60));
   return (
-    <ol className="flex flex-col">
-      {STEP_ORDER.map((step, index) => {
-        const done = index < currentIndex;
-        const active = index === currentIndex;
-        const at = timeFor(step);
-        return (
-          <li key={step} className="flex gap-4">
-            <div className="flex flex-col items-center">
-              <span
-                aria-hidden
-                className={[
-                  'h-3.5 w-3.5 rounded-full ring-4',
-                  active ? 'bg-emergency ring-emergency-soft'
-                    : done ? 'bg-ok ring-ok-soft'
-                    : 'bg-surface-overlay ring-transparent',
-                ].join(' ')}
-              />
-              {index < STEP_ORDER.length - 1 && (
-                <span aria-hidden
-                      className={`w-px flex-1 ${done ? 'bg-ok' : 'bg-edge-subtle'}`}
-                      style={{ minHeight: 28, opacity: done ? 0.45 : 1 }} />
-              )}
-            </div>
-            <div className="pb-5">
-              <p className={
-                active ? 'font-medium text-content'
-                  : done ? 'text-content-secondary'
-                  : 'text-content-muted'
-              }>
-                {LABELS[step]}
-                {active && <span className="sr-only"> (paso actual)</span>}
-              </p>
-              {at && (
-                <p className="text-[12px] text-content-muted tnum">
-                  {new Date(at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-/** Se muestra solo si la clasificación no fue concluyente: el modelo propone,
- *  la persona confirma. Es la red de seguridad sobre la clasificación por IA. */
-function ConfirmTypePanel({ onSelect }: { onSelect: (type: IncidentType) => void }) {
-  return (
-    <div className="rounded-md bg-warn-soft ring-1 ring-warn/30 p-4">
-      <p className="flex items-start gap-2 text-warn text-[14px] mb-3">
-        <AlertIcon size={18} />
-        <span>No entendimos bien el audio. ¿Qué está pasando?</span>
-      </p>
-      <div className="grid grid-cols-3 gap-2">
-        {CONFIRM_TYPES.map(({ type, label, Icon }) => (
-          <button
-            key={type}
-            type="button"
-            onClick={() => onSelect(type)}
-            className="pressable rounded-sm bg-surface-raised ring-1 ring-edge-subtle
-                       flex flex-col items-center justify-center gap-1.5 px-2 py-3
-                       text-content-secondary"
-            style={{ minHeight: 'var(--touch-comfort)' }}
-          >
-            <Icon size={24} />
-            <span className="text-[11px] leading-tight text-center">{label}</span>
-          </button>
-        ))}
+    <section className="overflow-hidden rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(145deg, ${STEP_TONE[tracking.step]}, ${STEP_TONE[tracking.step]}dd)` }}>
+      <div className="p-5">
+        <p className="text-xs font-bold uppercase tracking-[.16em] opacity-80">{LABELS[tracking.step]}</p>
+        {minutes !== null && <p className="mt-2 flex items-baseline gap-2"><span className="tnum text-5xl font-bold leading-none">{minutes}</span><span className="text-lg font-semibold">min aprox.</span></p>}
+        <h1 aria-live="polite" className="mt-3 text-2xl font-bold leading-tight">{tracking.headline}</h1>
+        <p className="mt-2 text-sm leading-relaxed opacity-90">{tracking.detail}</p>
       </div>
-    </div>
+    </section>
+  );
+}
+
+function VehicleCard({ tracking }: { tracking: TrackingResponse }) {
+  if (!tracking.vehicle) return null;
+  const age = Math.max(0, Math.round((tracking.serverTime - tracking.vehicle.updatedAt) / 1000));
+  const stale = age > 30;
+  return (
+    <section className="state-card mt-4 flex items-center gap-4 p-4">
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-emergency-soft text-emergency"><AmbulanceIcon size={29} /></span>
+      <div className="min-w-0 flex-1"><h2 className="font-bold">Ambulancia {tracking.vehicle.callsign}</h2><p className="text-sm text-content-muted">{tracking.vehicle.capabilityLevel}{tracking.distanceM !== null ? ` · ${(tracking.distanceM / 1000).toFixed(1)} km` : ''}</p></div>
+      <span className={`text-xs font-semibold ${stale ? 'text-warn' : 'text-ok'}`}>{stale ? `GPS hace ${age}s` : 'GPS en vivo'}</span>
+    </section>
+  );
+}
+
+function ConfirmTypePanel({ onSelect, disabled }: { onSelect: (type: IncidentType) => void; disabled: boolean }) {
+  return (
+    <section className="mt-4 rounded-2xl border border-warn/30 bg-warn-soft p-4" aria-labelledby="tracking-confirm-title">
+      <h2 id="tracking-confirm-title" className="flex items-center gap-2 font-bold text-warn"><AlertIcon size={19} /> Ayúdanos a confirmar</h2>
+      <p className="mt-1 text-sm text-content-secondary">El audio no fue concluyente. ¿Qué está pasando?</p>
+      <div className="mt-3 grid grid-cols-3 gap-2">{CONFIRM_TYPES.map(({ type, label, Icon }) => <button disabled={disabled} key={type} type="button" onClick={() => onSelect(type)} className="pressable flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-xl bg-surface-base p-2 text-content-secondary ring-1 ring-edge-subtle disabled:opacity-50"><Icon size={23} /><span className="text-center text-[11px] font-semibold leading-tight">{label}</span></button>)}</div>
+    </section>
+  );
+}
+
+function Timeline({ current, timeline }: { current: TrackingStep; timeline: TrackingResponse['timeline'] }) {
+  const currentIndex = TRACKING_STEP.indexOf(current);
+  return (
+    <section className="mt-5" aria-labelledby="timeline-title"><h2 id="timeline-title" className="text-lg font-bold">Qué está pasando</h2><ol className="mt-3 space-y-2">{TRACKING_STEP.slice(0, Math.max(2, currentIndex + 1)).map((step, index) => { const entry = timeline.find((item) => item.step === step); const active = index === currentIndex; return <li key={step} className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${active ? 'border-info/30 bg-info-soft' : 'border-edge-subtle bg-surface-raised'}`}><span className={`grid h-7 w-7 place-items-center rounded-full ${index < currentIndex ? 'bg-ok text-white' : active ? 'bg-info text-white' : 'bg-surface-overlay text-content-muted'}`}>{index < currentIndex ? <CheckIcon size={16} /> : index + 1}</span><span className="flex-1 text-sm font-semibold">{LABELS[step]}</span>{entry && <time className="tnum text-xs text-content-muted">{new Date(entry.at).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</time>}</li>; })}</ol></section>
   );
 }

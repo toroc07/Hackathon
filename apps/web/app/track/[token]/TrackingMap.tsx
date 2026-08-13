@@ -65,14 +65,14 @@ export function TrackingMap({ tracking }: Props) {
 
     // Los colores salen de los tokens de globals.css, no hardcodeados: si el
     // tema cambia, el mapa cambia con él.
-    const styles = getComputedStyle(document.documentElement);
+    const styles = getComputedStyle(canvas.closest('.app-light') ?? document.documentElement);
     const token = (name: string, fallback: string) =>
       styles.getPropertyValue(name).trim() || fallback;
     const COLOR = {
-      bg: token('--surface-base', '#070b14'),
-      grid: token('--border-subtle', 'rgba(174,187,212,0.14)'),
-      vehicle: token('--emergency', '#ff4557'),
-      target: token('--info', '#4cc4ff'),
+      bg: token('--surface-raised', '#f5f7fb'),
+      grid: token('--border-subtle', 'rgba(11,21,38,0.11)'),
+      vehicle: token('--emergency', '#d90429'),
+      target: token('--info', '#0969a2'),
     };
 
     const draw = () => {
@@ -119,18 +119,27 @@ export function TrackingMap({ tracking }: Props) {
 
       ctx.clearRect(0, 0, size.w, size.h);
 
-      // Fondo con retícula: da sensación de mapa y de movimiento cuando el
-      // encuadre se ajusta, sin necesitar tiles.
+      // Mapa esquemático local. Las vías son contexto visual; la línea
+      // discontinua sigue declarándose estimada y no simula ruteo real.
       ctx.fillStyle = COLOR.bg;
       ctx.fillRect(0, 0, size.w, size.h);
+      ctx.fillStyle = '#d9edf3';
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(size.w * .18, 0); ctx.bezierCurveTo(size.w * .1, size.h * .34, size.w * .26, size.h * .66, size.w * .12, size.h); ctx.lineTo(0, size.h); ctx.closePath(); ctx.fill();
       ctx.strokeStyle = COLOR.grid;
-      ctx.lineWidth = 1;
-      for (let i = 0; i < size.w; i += 44) {
-        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size.h); ctx.stroke();
-      }
-      for (let i = 0; i < size.h; i += 44) {
-        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(size.w, i); ctx.stroke();
-      }
+      ctx.lineWidth = 5;
+      const roads = [
+        [[.16, .12], [.42, .2], [.72, .12], [1, .22]],
+        [[.12, .46], [.34, .36], [.65, .48], [1, .42]],
+        [[.18, .78], [.46, .65], [.7, .76], [1, .64]],
+        [[.34, 0], [.4, .3], [.32, .62], [.48, 1]],
+        [[.72, 0], [.64, .26], [.78, .58], [.66, 1]],
+      ];
+      roads.forEach((road) => {
+        ctx.beginPath();
+        road.forEach(([x, y], index) => { if (index === 0) ctx.moveTo(x * size.w, y * size.h); else ctx.lineTo(x * size.w, y * size.h); });
+        ctx.stroke();
+      });
 
       const inc = project(incident, center, scale, size);
 
@@ -190,10 +199,13 @@ export function TrackingMap({ tracking }: Props) {
 
   return (
     <div className="relative w-full overflow-hidden rounded-md ring-1 ring-edge-subtle"
-         style={{ height: 280 }}>
+         style={{ height: 310 }}>
       {/* El canvas es decorativo; el estado real lo dan el titular, el ETA y la
           línea de tiempo, que sí son texto accesible. */}
       <canvas ref={canvasRef} className="block h-full w-full" role="presentation" />
+      <div className="pointer-events-none absolute left-3 top-3 rounded-full bg-surface/90 px-3 py-1 text-[11px] font-semibold text-content-secondary shadow-sm">
+        Cartagena · trayecto estimado
+      </div>
       <div className="pointer-events-none absolute bottom-3 left-3 flex gap-2 text-[11px]">
         <Legend token="var(--info)" label="Tu ubicación" />
         {tracking.vehicle && (

@@ -32,8 +32,36 @@ app = FastAPI(title="API para tu base Postgres")
 Base = automap_base()
 Base.prepare(autoload_with=engine)
 
-# Diccionario {nombre_tabla: clase_mapeada}
-tablas = Base.classes
+# Tablas protegidas: el backend Next.js (apps/web/src/server/modules/**) es la
+# ÚNICA fuente de verdad para su escritura. En particular `assignments` solo se
+# modifica dentro de la transacción atómica de dispatch/internal/assignment.ts
+# (UPDATE condicional + índices únicos parciales que impiden la doble
+# asignación). Un PUT/DELETE genérico aquí se saltaría esa transacción, la
+# máquina de estados (assertTransition) y la auditoría en incident_events —
+# exactamente lo que esas capas existen para impedir.
+#
+# Esta API sigue sirviendo para inspeccionar catálogo (zones, facilities) sin
+# abrir una puerta trasera al núcleo del sistema. Si necesitas mutar una de
+# estas tablas, hazlo a través de la API de Next.js, no de aquí.
+TABLAS_PROTEGIDAS = {
+    "assignments",
+    "vehicles",
+    "incidents",
+    "incident_reports",
+    "incident_events",
+    "dispatch_runs",
+    "dispatch_candidates",
+    "vehicle_locations",
+    "vehicle_current_location",
+    "shifts",
+}
+
+# Diccionario {nombre_tabla: clase_mapeada}, excluyendo las protegidas.
+tablas = {
+    nombre: modelo
+    for nombre, modelo in Base.classes.items()
+    if nombre not in TABLAS_PROTEGIDAS
+}
 
 if not list(tablas):
     raise RuntimeError(

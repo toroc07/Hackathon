@@ -44,6 +44,9 @@
   --emergency-pressed: #e02b3d;
   --emergency-soft:    rgba(255, 69, 87, 0.14);
   --emergency-ring:    rgba(255, 69, 87, 0.30);
+  /* Texto sobre fondo BLANCO (pantalla de oferta del responder: máximo
+     contraste bajo sol directo). --emergency normal falla AA sobre blanco. */
+  --emergency-ink:     #8a0f1e;
 
   /* Estados. Cada uno se acompaña SIEMPRE de icono o texto: el color por sí
      solo no comunica (daltonismo, sol directo, pantalla en escala de grises). */
@@ -75,6 +78,67 @@
   --touch-comfort: 64px;
 
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Las dos apps moviles siguen la direccion clara creada por Jesus David.
+   Se aisla en una clase para no alterar superficies operativas fuera de alcance. */
+.app-light {
+  color-scheme: light;
+  --surface-base: #ffffff;
+  --surface-raised: #f5f7fb;
+  --surface-overlay: #e9eef6;
+  --surface-pressed: #dfe6f0;
+  --text-primary: #0b1526;
+  --text-secondary: #40506a;
+  --text-muted: #68758a;
+  --emergency: #d90429;
+  --emergency-hover: #ef2346;
+  --emergency-pressed: #b00424;
+  --emergency-soft: rgba(217, 4, 41, 0.09);
+  --emergency-ring: rgba(217, 4, 41, 0.24);
+  --ok: #087f5b;
+  --ok-soft: rgba(8, 127, 91, 0.10);
+  --warn: #a65300;
+  --warn-soft: rgba(166, 83, 0, 0.11);
+  --info: #0969a2;
+  --info-soft: rgba(9, 105, 162, 0.10);
+  --border-subtle: rgba(11, 21, 38, 0.11);
+  --border-strong: rgba(11, 21, 38, 0.22);
+  background: var(--surface-base);
+  color: var(--text-primary);
+}
+
+.mobile-app-shell {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 32rem;
+  margin-inline: auto;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  background: var(--surface-base);
+}
+
+.mobile-app-shell *,
+.mobile-app-shell *::before,
+.mobile-app-shell *::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.state-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  box-shadow: 0 14px 36px rgba(11, 21, 38, 0.08), 0 2px 8px rgba(11, 21, 38, 0.05);
+}
+
+.map-paper {
+  background-color: #e8f0ed;
+  background-image:
+    linear-gradient(22deg, transparent 46%, rgba(255,255,255,.96) 47%, rgba(255,255,255,.96) 50%, transparent 51%),
+    linear-gradient(112deg, transparent 43%, rgba(255,255,255,.92) 44%, rgba(255,255,255,.92) 47%, transparent 48%),
+    linear-gradient(72deg, transparent 62%, rgba(210,222,216,.9) 63%, rgba(210,222,216,.9) 64%, transparent 65%);
+  background-size: 92px 78px, 124px 96px, 160px 120px;
 }
 
 html {
@@ -129,6 +193,28 @@ body {
   50%      { transform: scale(1.18); opacity: 0.25; }
 }
 .animate-pulse-ring { animation: pulse-ring 2s var(--motion-enter) infinite; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 360ms var(--motion-enter) both; }
+
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 var(--emergency-ring), 0 18px 44px rgba(217, 4, 41, .20); }
+  50% { box-shadow: 0 0 0 16px rgba(217, 4, 41, 0), 0 18px 44px rgba(217, 4, 41, .26); }
+}
+.animate-breathe { animation: breathe 2.4s var(--motion-enter) infinite; }
+
+/* Modal: el scrim se desvanece, el panel entra con una leve subida + escala.
+   Mismo vocabulario de duración/easing que el resto de la app. */
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)     scale(1); }
+}
+.modal-scrim-in { animation: scrim-in var(--motion-base) var(--motion-enter) both; }
+.modal-panel-in { animation: panel-in var(--motion-base) var(--motion-enter) both; }
 
 /* Respeta la preferencia del sistema. Personas con trastornos vestibulares o
    migraña pueden marearse con movimiento; y aquí ya están bajo estrés. */
