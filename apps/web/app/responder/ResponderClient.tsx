@@ -2,9 +2,12 @@
 
 import { estimateEta, type Assignment, type Incident, type VehicleWithLocation } from '@dispatch/contracts';
 import { useEffect, useRef, useState } from 'react';
-import { CheckIcon, LocationIcon, PhoneIcon } from '@/src/components/ui/icons';
+import { AlertIcon, CheckIcon, LocationIcon, PhoneIcon } from '@/src/components/ui/icons';
 import { Badge, Button } from '@/src/components/ui';
+import { LiveRouteMap } from '@/src/components/map/LiveRouteMap';
+import { useKeepAlive } from '@/src/hooks/useKeepAlive';
 import { useLiveResource } from '@/src/hooks/useLiveResource';
+import type { RouteResult } from '@/src/lib/routing';
 import { useVehicleTracking, type GpsState } from './useVehicleTracking';
 import { assignmentActionOutcome } from './responderState';
 
@@ -60,7 +63,10 @@ export function ResponderClient() {
   const tracking = useVehicleTracking(UNIVERSAL_VEHICLE_ID, true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [route, setRoute] = useState<RouteResult | null>(null);
   const redispatchingRef = useRef(false);
+
+  useKeepAlive();
 
   useEffect(() => {
     if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/responder/sw.js', { scope: '/responder/' });
@@ -133,65 +139,131 @@ export function ResponderClient() {
   };
 
   const notified = Boolean(assignment && assignment.status !== 'OFFERED' && assignment.status !== 'ACCEPTED');
-  const liveEta = notified && assignedVehicle?.location && incident
-    ? estimateEta(assignedVehicle.location, incident, cartagenaHour())
+
+  // El GPS del propio dispositivo va por delante del que ya viajó al servidor:
+  // para SU mapa, el conductor debe verse donde está, no donde estaba hace unos
+  // segundos. La posición del servidor queda de respaldo.
+  const vehiclePoint = tracking.position ?? assignedVehicle?.location ?? null;
+
+  // La ruta del grafo manda; `estimateEta` en línea recta solo cubre el hueco
+  // hasta que llega (o si el servicio de rutas está caído).
+  const fallbackEta = vehiclePoint && incident
+    ? estimateEta(vehiclePoint, incident, cartagenaHour())
     : null;
+  const distanceKm = route ? route.distanceMeters / 1000 : fallbackEta ? fallbackEta.distanceM / 1000 : null;
+  const etaMinutes = route
+    ? Math.max(1, Math.round(route.durationSeconds / 60))
+    : fallbackEta ? Math.max(1, Math.round(fallbackEta.etaSeconds / 60)) : null;
 
   return (
     <main className="app-light responder-shell">
-      <ResponderHeader gps={tracking.state} queued={tracking.queued} tone={incident ? (notified ? 'green' : 'red') : 'green'} />
+      <ResponderHeader
+        gps={tracking.state}
+        queued={tracking.queued}
+        tone={incident ? (notified ? 'green' : 'red') : 'slate'}
+        status={incident ? (notified ? 'En camino' : 'Reporte activo') : 'En espera'}
+      />
 
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[.16em] text-content-muted">{incident ? 'Reporte recibido' : 'Estado actual'}</p>
-          <h1 className="text-2xl font-bold">{incident ? incidentTypeLabel(incident.type) : 'Sin reportes activos'}</h1>
-        </div>
-        {incident && <Badge className="bg-surface-overlay px-3 py-2 text-content-secondary">{incident.code}</Badge>}
-      </div>
+      {!incident ? (
+        <IdleState gps={tracking.state} />
+      ) : (
+        <>
+          <div className="mt-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[.16em] text-emergency">
+                {notified ? 'Vas en camino' : 'Reporte recibido'}
+              </p>
+              <h1 className="mt-0.5 text-2xl font-bold leading-tight">{incidentTypeLabel(incident.type)}</h1>
+            </div>
+            <Badge className="tnum shrink-0 bg-surface-overlay px-3 py-2 text-content-secondary">{incident.code}</Badge>
+          </div>
 
-      <section className="state-card mt-4 overflow-hidden">
-        {incident && assignedVehicle && <RouteMap vehicle={assignedVehicle} incident={incident} />}
-        <div className="p-4">
-          {incident ? (
-            <>
-              <p className="flex items-start gap-2 text-content-secondary"><LocationIcon className="mt-0.5 shrink-0 text-emergency" size={18} />{incident.address ?? 'Ubicación GPS del incidente'}</p>
+          <section className="state-card mt-4 overflow-hidden">
+            <LiveRouteMap
+              vehicle={vehiclePoint}
+              destination={{ lat: incident.lat, lng: incident.lng }}
+              vehicleLabel="Tu ambulancia"
+              destinationLabel={`Emergencia ${incident.code}`}
+              onRoute={setRoute}
+              height={264}
+            />
+
+            {/* Distancia y tiempo primero y en grande: es lo que el conductor
+                mira de reojo mientras conduce. */}
+            {etaMinutes !== null && (
+              <div className="flex items-end gap-5 border-b border-edge-subtle px-4 py-3">
+                <span className="flex items-baseline gap-1.5">
+                  <span className="tnum text-4xl font-bold leading-none text-ok">{etaMinutes}</span>
+                  <span className="text-sm font-bold text-content-secondary">min</span>
+                </span>
+                {distanceKm !== null && (
+                  <span className="flex items-baseline gap-1.5">
+                    <span className="tnum text-2xl font-bold leading-none">{distanceKm.toFixed(1)}</span>
+                    <span className="text-sm font-bold text-content-secondary">km</span>
+                  </span>
+                )}
+                <span className="ml-auto pb-1 text-[11px] font-semibold text-content-muted">
+                  {route?.source === 'graph' ? 'por calles' : 'estimado'}
+                </span>
+              </div>
+            )}
+
+            <div className="p-4">
+              <p className="flex items-start gap-2 font-semibold leading-snug">
+                <LocationIcon className="mt-0.5 shrink-0 text-emergency" size={18} />
+                {incident.address ?? 'Ubicación GPS del incidente'}
+              </p>
               <p className="mt-2 text-sm font-semibold text-content-secondary">{incident.patientCount} paciente(s)</p>
               {/* El reporte que estructuró la IA (audio-intake.ts), tal cual — es lo único operativo que ve el responder. */}
               {reportSummary && (
-                <p className="mt-3 rounded-xl bg-surface-overlay p-3 text-sm italic text-content-secondary">&ldquo;{reportSummary}&rdquo;</p>
-              )}
-              {!assignment && (
-                <p className="mt-3 text-sm font-semibold text-info">Buscando ambulancia disponible…</p>
-              )}
-              {liveEta && (
-                <p className="mt-3 text-sm font-bold text-ok">
-                  {(liveEta.distanceM / 1000).toFixed(1)} km · llegas en ~{Math.max(1, Math.round(liveEta.etaSeconds / 60))} min
+                <p className="mt-3 rounded-xl bg-surface-overlay p-3 text-sm italic leading-relaxed text-content-secondary">
+                  &ldquo;{reportSummary}&rdquo;
                 </p>
               )}
-            </>
-          ) : (
-            <p className="text-sm text-content-secondary">Te avisaremos apenas llegue un reporte de un ciudadano.</p>
-          )}
-        </div>
-      </section>
+              {!assignment && (
+                <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-info">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-info" />
+                  Buscando ambulancia disponible…
+                </p>
+              )}
+            </div>
+          </section>
 
-      {incident && (
-        <div className="mt-auto flex flex-col gap-3 pt-5">
-          {/* Llamar no depende de que ya haya asignación: es el contacto del
-           *  reporte, útil desde el primer segundo. */}
-          {reporterContact && (
-            <a href={`tel:${reporterContact}`} className="pressable flex min-h-touch-lg items-center justify-center gap-2 rounded-xl border border-edge-strong font-semibold text-info">
-              <PhoneIcon size={20} /> Llamar al ciudadano
-            </a>
-          )}
-          {assignment && (
-            notified ? (
-              <p className="flex items-center justify-center gap-2 rounded-xl bg-ok-soft py-3 font-semibold text-ok"><CheckIcon size={18} /> Ya avisamos que vas en camino</p>
-            ) : (
-              <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void notifyEnRoute()}>Notificar: voy en camino</Button>
-            )
-          )}
-        </div>
+          <div className="mt-auto flex flex-col gap-3 pt-5">
+            <div className="grid grid-cols-2 gap-3">
+              {/* Navegación paso a paso: el mapa da contexto, pero al volante
+                  hace falta voz. Se delega en la app que el conductor ya usa. */}
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${incident.lat},${incident.lng}&travelmode=driving`}
+                target="_blank" rel="noopener noreferrer"
+                className="pressable flex min-h-touch-lg items-center justify-center gap-2 rounded-xl bg-info font-bold text-white"
+              >
+                <LocationIcon size={19} /> Cómo llegar
+              </a>
+              {/* Llamar no depende de que ya haya asignación: es el contacto del
+               *  reporte, útil desde el primer segundo. */}
+              <a
+                href={reporterContact ? `tel:${reporterContact}` : undefined}
+                aria-disabled={!reporterContact}
+                className={`pressable flex min-h-touch-lg items-center justify-center gap-2 rounded-xl border border-edge-strong font-bold ${reporterContact ? 'text-info' : 'pointer-events-none text-content-muted opacity-50'}`}
+              >
+                <PhoneIcon size={19} /> Llamar
+              </a>
+            </div>
+
+            {assignment && (
+              notified ? (
+                <p className="flex items-center justify-center gap-2 rounded-xl bg-ok-soft py-3 font-semibold text-ok">
+                  <CheckIcon size={18} /> Ya avisamos que vas en camino
+                </p>
+              ) : (
+                <Button className="responder-action bg-ok text-white" disabled={busy} onClick={() => void notifyEnRoute()}>
+                  {busy ? 'Enviando…' : 'Notificar: voy en camino'}
+                </Button>
+              )
+            )}
+          </div>
+        </>
       )}
 
       {(message || live.error) && <p role="alert" className="responder-alert">{message ?? live.error?.message}</p>}
@@ -199,35 +271,53 @@ export function ResponderClient() {
   );
 }
 
-function ResponderHeader({ gps, queued, tone }: { gps: GpsState; queued: number; tone: 'green' | 'red' }) {
-  const backgrounds = { green: 'bg-[#087f5b]', red: 'bg-[#d90429]' };
+function ResponderHeader({ gps, queued, tone, status }: {
+  gps: GpsState; queued: number; tone: 'green' | 'red' | 'slate'; status: string;
+}) {
+  const backgrounds = { green: 'bg-[#087f5b]', red: 'bg-[#d90429]', slate: 'bg-[#1f2a3d]' };
   const danger = gps !== 'sending';
   return (
     <header className={`responder-header ${backgrounds[tone]}`}>
       <div className="flex items-center justify-between gap-3">
-        <div className="px-2"><span className="block text-[10px] font-bold uppercase tracking-[.18em] opacity-75">Panel de</span><span className="block text-2xl font-bold">Ambulancia</span></div>
-        <span className={`rounded-full px-3 py-2 text-xs font-bold ${danger ? 'bg-white text-emergency' : 'bg-white/18 text-white ring-1 ring-white/30'}`}>{GPS_LABELS[gps]}{queued ? ` · ${queued} en cola` : ''}</span>
+        <div className="px-2">
+          <span className="block text-[10px] font-bold uppercase tracking-[.18em] opacity-75">Panel de</span>
+          <span className="block text-2xl font-bold leading-tight">Ambulancia</span>
+        </div>
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="rounded-full bg-white/18 px-3 py-1 text-xs font-bold text-white ring-1 ring-white/30">{status}</span>
+          <span className={`rounded-full px-3 py-1 text-[11px] font-bold ${danger ? 'bg-white text-emergency' : 'bg-white/18 text-white ring-1 ring-white/30'}`}>
+            {GPS_LABELS[gps]}{queued ? ` · ${queued} en cola` : ''}
+          </span>
+        </div>
       </div>
     </header>
   );
 }
 
-function RouteMap({ vehicle, incident }: { vehicle: VehicleWithLocation; incident: Incident }) {
-  const bounds = { minLat: 10.38, maxLat: 10.51, minLng: -75.59, maxLng: -75.46 };
-  const point = (lat: number, lng: number) => ({ x: Math.max(8, Math.min(92, ((lng - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * 100)), y: Math.max(8, Math.min(92, (1 - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * 100)) });
-  const start = vehicle.location ? point(vehicle.location.lat, vehicle.location.lng) : { x: 48, y: 48 };
-  const end = point(incident.lat, incident.lng);
+/** Sin reportes: la pantalla debe leerse de un vistazo desde el asiento del
+ *  conductor y dejar claro que el panel SÍ está escuchando. Si además el GPS
+ *  no está enviando, eso es lo único accionable aquí y se dice explícitamente. */
+function IdleState({ gps }: { gps: GpsState }) {
+  const gpsBroken = gps === 'denied' || gps === 'unsupported' || gps === 'offline';
   return (
-    <div className="responder-map relative h-64 overflow-hidden" role="img" aria-label={`Distancia entre la ambulancia y ${incident.code}`}>
-      <svg aria-hidden className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#1261c9" strokeWidth="2" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-        <circle cx={end.x} cy={end.y} r="3.4" fill="#d90429" stroke="white" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
-        <circle cx={start.x} cy={start.y} r="4" fill="#087f5b" stroke="white" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
-      </svg>
-      <span className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-content-secondary shadow">Cartagena · ruta estimada</span>
-      <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-ok shadow">Tú</span>
-      <span className="absolute bottom-3 right-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-emergency shadow">{incident.code}</span>
-    </div>
+    <section className="my-auto flex flex-col items-center py-12 text-center">
+      <span className="relative grid h-24 w-24 place-items-center">
+        <span className="absolute inset-0 animate-pulse-ring rounded-full bg-ok-soft" />
+        <span className="relative grid h-16 w-16 place-items-center rounded-full bg-ok-soft text-ok">
+          <CheckIcon size={30} />
+        </span>
+      </span>
+      <h1 className="mt-6 text-xl font-bold">Sin reportes activos</h1>
+      <p className="mt-2 max-w-xs text-sm leading-relaxed text-content-secondary">
+        La unidad está disponible. Te avisamos con vibración apenas llegue un reporte de un ciudadano.
+      </p>
+      {gpsBroken && (
+        <p className="mt-5 flex items-start gap-2 rounded-xl bg-warn-soft px-4 py-3 text-left text-sm font-semibold text-warn">
+          <AlertIcon className="mt-0.5 shrink-0" size={18} />
+          Sin GPS activo el despacho no puede calcular tu distancia. Permite la ubicación en el navegador.
+        </p>
+      )}
+    </section>
   );
 }
 

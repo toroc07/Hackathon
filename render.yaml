@@ -1,0 +1,33 @@
+# Blueprint de Render para el servicio de rutas.
+#
+# Declara SOLO el routing-service. El audio-service (dispatch-ai-call) se creó
+# a mano desde el panel de Render y se deja fuera a propósito: meterlo aquí
+# arriesgaría que un "Apply blueprint" pise su configuración en vivo.
+#
+# Para crearlo: Render → New → Blueprint → conectar este repo.
+
+services:
+  - type: web
+    name: dispatch-routing
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: backend/routing
+
+    # El grafo (.pkl, ~12 MB) está en .gitignore por ser un artefacto derivado,
+    # así que se construye en el build desde data/carreteras.geojson, que sí
+    # está versionado. Medido: 140 MB de pico en el build y 117 MB en marcha,
+    # dentro de los 512 MB del plan gratuito.
+    buildCommand: pip install -r requirements.txt && python graph_builder.py
+    startCommand: uvicorn routing_service:app --host 0.0.0.0 --port $PORT
+
+    # Arrancar carga 25k nodos en memoria (~1 s). El health check evita que
+    # Render dé el despliegue por bueno antes de que el grafo esté listo.
+    healthCheckPath: /health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+    # El plan gratuito duerme a los 15 min de inactividad; de eso se encarga
+    # .github/workflows/keepalive.yml, que pinga /health cada 10 min.

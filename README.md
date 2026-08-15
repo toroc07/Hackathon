@@ -29,6 +29,39 @@ Luego abre:
 > Las antiguas pantallas `/report`, `/responder` y `/command` se unificaron en
 > una sola experiencia ciudadana: grabar → enviar → confirmar.
 
+### Mapa y rutas por calles
+
+El mapa del seguimiento ciudadano y el del panel de ambulancia dibujan la ruta
+**real por calles**, calculada con A* sobre el grafo vial de OpenStreetMap de
+Cartagena (25k nodos). El servicio vive en [`backend/routing`](backend/routing/README.md):
+
+```bash
+cd backend/routing
+pip install -r requirements.txt
+python graph_builder.py     # una sola vez: genera el .pkl (no versionado)
+python routing_service.py   # queda escuchando en :4002
+```
+
+`apps/web` lo consume por `/api/routing` y lee la URL de `ROUTING_SERVICE_URL`
+(por defecto `http://127.0.0.1:4002`). **Sin el servicio la app no se rompe**:
+degrada a línea recta con el ETA del despacho y el mapa lo dice — la etiqueta
+pasa de «Ruta por calles» a «Trayecto estimado».
+
+### Servicios dormidos (capas gratuitas)
+
+Render y Neon suspenden por inactividad, y despertar Render tarda ~50 s justo
+cuando alguien está reportando una emergencia. Dos defensas:
+
+| Dónde | Qué hace |
+|---|---|
+| `.github/workflows/keepalive.yml` | Cron cada 10 min: pinga audio, rutas y la app |
+| `useKeepAlive()` en el cliente | Al abrir la app, un `GET /api/keepalive` calienta los tres |
+
+`GET /api/keepalive` responde 200 siempre y reporta el estado servicio por
+servicio en el cuerpo. Para que el cron apunte a tu despliegue, define las
+variables `APP_URL`, `AUDIO_SERVICE_URL` y `ROUTING_SERVICE_URL` en
+*Settings → Secrets and variables → Actions → Variables*.
+
 ### Base de datos
 
 Necesitas un PostgreSQL. Opciones: **Vercel Postgres** (Storage → Create),

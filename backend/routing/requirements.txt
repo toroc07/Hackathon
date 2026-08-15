@@ -1,0 +1,11 @@
+# Servicio de rutas (A* sobre el grafo vial de Cartagena).
+#
+# networkx y shapely solo hacen falta para CONSTRUIR el grafo
+# (graph_builder.py); el servicio en caliente solo lee el .pkl, pero
+# despickelarlo reconstruye objetos de networkx, así que también es
+# dependencia de ejecución.
+fastapi
+uvicorn[standard]
+pydantic
+networkx
+shapely

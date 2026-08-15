@@ -28,6 +28,11 @@ function readQueue(vehicleId: string): QueuedPosition[] {
 export function useVehicleTracking(vehicleId: string | null, enabled: boolean) {
   const [state, setState] = useState<GpsState>('waiting');
   const [queued, setQueued] = useState(0);
+  /** Última posición leída del dispositivo, para el mapa de este mismo panel.
+   *  Se expone aparte de la cola de envío: subir cada lectura al servidor sería
+   *  ruido, pero DIBUJARLAS todas es lo que hace que el conductor se vea moverse
+   *  en tiempo real en vez de a saltos de varios segundos. */
+  const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
   const queueRef = useRef<QueuedPosition[]>([]);
   const sendingRef = useRef(false);
   const lastQueuedAtRef = useRef(0);
@@ -86,6 +91,7 @@ export function useVehicleTracking(vehicleId: string | null, enabled: boolean) {
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
+        setPosition({ lat: position.coords.latitude, lng: position.coords.longitude });
         const speedKmh = position.coords.speed == null ? undefined : Math.max(0, position.coords.speed * 3.6);
         const moving = (speedKmh ?? 0) >= 3;
         const cadenceMs = moving ? 3_000 : 15_000;
@@ -112,5 +118,5 @@ export function useVehicleTracking(vehicleId: string | null, enabled: boolean) {
     };
   }, [enabled, flush, persist, vehicleId]);
 
-  return { state, queued };
+  return { state, queued, position };
 }

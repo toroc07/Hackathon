@@ -42,17 +42,17 @@
   font-weight: 650;
 }
 
-.responder-shell button,
+/* Los controles del mapa quedan fuera: son ayudas secundarias dentro de un
+   recuadro de 264 px, y a 48 px se comen el mapa que están sirviendo. */
+.responder-shell button:not(.map-control):not([class*='maplibregl-']),
 .responder-shell select,
 .responder-shell input,
 .responder-shell a[role='button'] {
   min-height: 48px;
 }
 
-.responder-map {
-  background-color: #e8f0ed;
-  background-image:
-    linear-gradient(24deg, transparent 46%, rgba(255,255,255,.95) 47%, rgba(255,255,255,.95) 50%, transparent 51%),
-    linear-gradient(112deg, transparent 43%, rgba(255,255,255,.9) 44%, rgba(255,255,255,.9) 47%, transparent 48%);
-  background-size: 90px 76px, 128px 98px;
+/* El mapa de MapLibre inyecta controles propios; aquí solo se rebaja su peso
+   visual para que no compitan con los botones de acción del panel. */
+.responder-shell .maplibregl-ctrl-group button {
+  min-height: 29px;
 }

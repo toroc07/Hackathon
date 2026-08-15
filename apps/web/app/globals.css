@@ -194,6 +194,14 @@ body {
 }
 .animate-pulse-ring { animation: pulse-ring 2s var(--motion-enter) infinite; }
 
+/* Halo del icono de la ambulancia en el mapa. Vive aquí y no en el componente
+   porque el marcador de MapLibre se inyecta como DOM suelto fuera de React y
+   no puede llevar clases de Tailwind. */
+@keyframes dispatch-pulse {
+  0%   { transform: scale(0.55); opacity: 0.85; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }

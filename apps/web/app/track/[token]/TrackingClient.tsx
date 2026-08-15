@@ -3,11 +3,13 @@
 import { TRACKING_STEP, type IncidentType, type TrackingResponse, type TrackingStep } from '@dispatch/contracts';
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { AiCallWidget } from '@/src/components/call/AiCallWidget';
+import { LiveRouteMap } from '@/src/components/map/LiveRouteMap';
 import {
   AlertIcon, AmbulanceIcon, CarCrashIcon, CheckIcon, FallIcon, HeartIcon,
   LungsIcon, TraumaIcon, UnconsciousIcon,
 } from '@/src/components/ui/icons';
-import { TrackingMap } from './TrackingMap';
+import { useKeepAlive } from '@/src/hooks/useKeepAlive';
+import type { RouteResult } from '@/src/lib/routing';
 
 const POLL_MS = 4_000;
 const LABELS: Record<TrackingStep, string> = {
@@ -32,7 +34,10 @@ export function TrackingClient({ token }: { token: string }) {
   const [offline, setOffline] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [route, setRoute] = useState<RouteResult | null>(null);
   const timerRef = useRef<number | null>(null);
+
+  useKeepAlive();
 
   const load = useCallback(async () => {
     try {
@@ -80,14 +85,21 @@ export function TrackingClient({ token }: { token: string }) {
       <StatusHero tracking={tracking} />
 
       <section className="mt-4 overflow-hidden rounded-2xl border border-edge-subtle bg-surface-raised shadow-sm">
-        <TrackingMap tracking={tracking} />
+        <LiveRouteMap
+          vehicle={tracking.vehicle ? { lat: tracking.vehicle.lat, lng: tracking.vehicle.lng } : null}
+          destination={{ lat: tracking.incidentLat, lng: tracking.incidentLng }}
+          vehicleLabel={tracking.vehicle ? `Ambulancia ${tracking.vehicle.callsign}` : undefined}
+          destinationLabel="Tu ubicación"
+          onRoute={setRoute}
+          height={320}
+        />
       </section>
 
       <section className="mt-4">
         <AiCallWidget />
       </section>
 
-      {tracking.vehicle && <VehicleCard tracking={tracking} />}
+      {tracking.vehicle && <VehicleCard tracking={tracking} route={route} />}
 
       {tracking.step === 'ASSIGNING' && !confirmed && (
         <ConfirmTypePanel disabled={confirming} onSelect={confirmType} />
@@ -133,14 +145,19 @@ function StatusHero({ tracking }: { tracking: TrackingResponse }) {
   );
 }
 
-function VehicleCard({ tracking }: { tracking: TrackingResponse }) {
+function VehicleCard({ tracking, route }: { tracking: TrackingResponse; route: RouteResult | null }) {
   if (!tracking.vehicle) return null;
   const age = Math.max(0, Math.round((tracking.serverTime - tracking.vehicle.updatedAt) / 1000));
   const stale = age > 30;
+  // La distancia por calles del grafo manda sobre la estimación en línea recta
+  // del servidor cuando existe: es la que el conductor va a recorrer de verdad.
+  const distance = route?.source === 'graph'
+    ? `${(route.distanceMeters / 1000).toFixed(1)} km por calles`
+    : tracking.distanceM !== null ? `${(tracking.distanceM / 1000).toFixed(1)} km` : null;
   return (
     <section className="state-card mt-4 flex items-center gap-4 p-4">
       <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-emergency-soft text-emergency"><AmbulanceIcon size={29} /></span>
-      <div className="min-w-0 flex-1"><h2 className="font-bold">Ambulancia {tracking.vehicle.callsign}</h2><p className="text-sm text-content-muted">{tracking.vehicle.capabilityLevel}{tracking.distanceM !== null ? ` · ${(tracking.distanceM / 1000).toFixed(1)} km` : ''}</p></div>
+      <div className="min-w-0 flex-1"><h2 className="font-bold">Ambulancia {tracking.vehicle.callsign}</h2><p className="text-sm text-content-muted">{tracking.vehicle.capabilityLevel}{distance ? ` · ${distance}` : ''}</p></div>
       <span className={`text-xs font-semibold ${stale ? 'text-warn' : 'text-ok'}`}>{stale ? `GPS hace ${age}s` : 'GPS en vivo'}</span>
     </section>
   );
