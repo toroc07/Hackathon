@@ -1,0 +1,58 @@
+name: keep-alive
+
+# Mantiene despiertos los servicios en capa gratuita: Render duerme el
+# audio-service y el routing-service a los ~15 min de inactividad, y despertarlos
+# tarda ~50 s — medio minuto que caería justo sobre alguien reportando una
+# emergencia.
+#
+# Cada 10 min hay margen de sobra frente a esa ventana de 15, incluso cuando
+# GitHub retrasa el cron (los `schedule` no son puntuales; en horas punta pueden
+# irse varios minutos).
+#
+# Se pinga cada servicio DIRECTAMENTE además de a través de /api/keepalive: si
+# la app de Vercel falla, los servicios deben seguir despiertos igual.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+# Si un ping anterior se quedó colgado esperando a un servicio frío, no tiene
+# sentido acumular ejecuciones: la última es la única que importa.
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Despertar servicios
+        env:
+          # Configurables en Settings → Secrets and variables → Actions →
+          # Variables, sin tocar este archivo.
+          APP_URL: ${{ vars.APP_URL || 'https://dispatch-cartagena.vercel.app' }}
+          AUDIO_URL: ${{ vars.AUDIO_SERVICE_URL || 'https://dispatch-ai-call.onrender.com' }}
+          ROUTING_URL: ${{ vars.ROUTING_SERVICE_URL || 'https://dispatch-routing.onrender.com' }}
+        run: |
+          ping() {
+            local name="$1" url="$2"
+            if [ -z "$url" ]; then
+              echo "· $name: sin URL configurada, se omite"
+              return 0
+            fi
+            # --max-time 90 cubre el arranque en frío de Render (~50 s).
+            local code
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 90 --retry 2 --retry-delay 15 "$url" || echo "000")
+            echo "· $name: HTTP $code ($url)"
+          }
+
+          ping "audio-service"   "${AUDIO_URL:+$AUDIO_URL/health}"
+          ping "routing-service" "${ROUTING_URL:+$ROUTING_URL/health}"
+          # Este además toca la base (Neon suspende el cómputo por inactividad).
+          ping "app"             "${APP_URL:+$APP_URL/api/keepalive}"
+
+          # El job no falla si un servicio no responde: un fallo recurrente en
+          # rojo entrena a ignorar el correo de GitHub. El estado real se lee en
+          # el log y en /api/keepalive, que reporta servicio por servicio.

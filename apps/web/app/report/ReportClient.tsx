@@ -8,6 +8,7 @@ import {
   AlertIcon, CarCrashIcon, CheckIcon, FallIcon, HeartIcon, LocationIcon,
   LungsIcon, MicIcon, RetryIcon, SendIcon, SosIcon, StopIcon, UnconsciousIcon,
 } from '@/src/components/ui/icons';
+import { useKeepAlive } from '@/src/hooks/useKeepAlive';
 import { useAudioRecorder } from './useAudioRecorder';
 
 type Stage = 'locating' | 'ready' | 'sending';
@@ -42,6 +43,10 @@ export function ReportClient({ citizenPhone }: { citizenPhone: string }) {
   const [error, setError] = useState<string | null>(null);
   const [fallbackType, setFallbackType] = useState<IncidentType | null>(null);
   const mountedRef = useRef(true);
+
+  // Los servicios en capa gratuita despiertan mientras la persona busca la
+  // ubicación y pulsa grabar, no cuando ya está hablando al micrófono.
+  useKeepAlive();
 
   const locate = useCallback(() => {
     setStage('locating');
